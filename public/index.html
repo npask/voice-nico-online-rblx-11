@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proximity Voice Debug</title>
+<title>Proximity Voice Debug 2D</title>
 <style>
 body {margin:0;height:100vh;background:radial-gradient(circle at top,#0f172a,#020617);
 font-family:system-ui,sans-serif;color:#e5e7eb;display:flex;align-items:center;justify-content:center;}
@@ -24,7 +24,7 @@ button:hover{background:#0ea5e9;}
 </head>
 <body>
 <div class="card">
-<h1>🎧 Proximity Voice Debug</h1>
+<h1>🎧 Proximity Voice Debug 2D</h1>
 <p>Private Runde · Freunde only</p>
 <input id="name" placeholder="Dein Name" />
 <button onclick="joinVoice()">Voice beitreten</button>
@@ -48,18 +48,10 @@ Es wird nichts gespeichert oder aufgezeichnet.
 const socket = io();
 const audioCtx = new AudioContext();
 let localStream = null;
-const peers = {}; // id -> { pc, gain, panner }
-let knownUsers = []; // IDs der schon verbundenen Users
+const peers = {}; // id -> { pc, gain }
 
-// --------------------
-// Interne State Speicherung
-// --------------------
-const lastPlayerState = {}; // id -> { position, distance, volume, lastAudioTime }
-let lastAudioEvent = null;
-
-// --------------------
 const debugEl = document.getElementById("debug");
-function logDebug(msg){ debugEl.innerText = msg+"\n"+debugEl.innerText; }
+function logDebug(msg){ console.log(msg); debugEl.innerText = msg+"\n"+debugEl.innerText; }
 
 // --------------------
 // Join Voice
@@ -70,13 +62,13 @@ async function joinVoice(){
 
   localStream = await navigator.mediaDevices.getUserMedia({audio:true});
   await audioCtx.resume();
+  logDebug("✅ AudioContext resumed, mic active");
+
+  socket.emit("join", name);
 
   document.getElementById("micDot").classList.add("active");
   document.getElementById("micText").innerText = "Mikrofon aktiv";
   document.getElementById("muteBtn").disabled = false;
-
-  socket.emit("join", name);
-  knownUsers.forEach(id => createPeer(id, true));
 }
 
 // --------------------
@@ -89,31 +81,27 @@ function toggleMute(){
   localStream.getAudioTracks()[0].enabled = !muted;
   document.getElementById("muteBtn").innerText = muted?"🎤 Unmute":"🔇 Mute";
   document.getElementById("micText").innerText = muted?"Mikrofon stumm":"Mikrofon aktiv";
+  logDebug("🔇 Mute toggled: "+muted);
 }
 
 // --------------------
 // Create Peer
 // --------------------
 function createPeer(id, initiator){
-  if(!localStream) return;
+  if(!localStream){ logDebug("⚠️ localStream noch nicht bereit für " + id); return; }
   if(peers[id]) return;
 
   const pc = new RTCPeerConnection();
   localStream.getTracks().forEach(track=>pc.addTrack(track, localStream));
 
   const gain = audioCtx.createGain();
-  const panner = audioCtx.createPanner();
-  panner.panningModel = "HRTF";
-  panner.distanceModel = "linear";
-  panner.maxDistance = 70;
-  gain.connect(panner).connect(audioCtx.destination);
+  gain.gain.value = 1;
+  gain.connect(audioCtx.destination);
 
   pc.ontrack = e=>{
     const src = audioCtx.createMediaStreamSource(e.streams[0]);
-    src.connect(gain); 
-    lastAudioEvent = { from: id, time: Date.now() }; // Letztes Audio gespeichert
-    if(!lastPlayerState[id]) lastPlayerState[id] = {};
-    lastPlayerState[id].lastAudioTime = Date.now();
+    src.connect(gain);
+    logDebug("🎧 Track received from "+id);
   };
 
   pc.onicecandidate = e=>{
@@ -127,15 +115,16 @@ function createPeer(id, initiator){
     });
   }
 
-  peers[id]={pc,gain,panner};
+  peers[id]={pc,gain};
+  logDebug("🟢 Peer created for "+id+" (initiator="+initiator+")");
 }
 
 // --------------------
 // Signaling
 // --------------------
 socket.on("user-joined", id=>{
-  knownUsers.push(id);
-  if(localStream) createPeer(id,true);
+  logDebug("➕ User joined: "+id);
+  createPeer(id,false);
 });
 
 socket.on("signal", async data=>{
@@ -150,41 +139,33 @@ socket.on("signal", async data=>{
     }
   }
   if(data.signal.ice) await peer.pc.addIceCandidate(data.signal.ice);
+  logDebug("🔔 Signal processed from "+data.from);
 });
 
+// --------------------
+// User disconnect
+// --------------------
 socket.on("user-left", id=>{
-  knownUsers = knownUsers.filter(x=>x!==id);
+  logDebug("❌ User left: "+id);
   if(peers[id]){
     peers[id].pc.close();
     delete peers[id];
   }
-  delete lastPlayerState[id];
 });
 
 // --------------------
-// Distance + 3D Audio
+// 2D Distance Audio
 // --------------------
 socket.on("players", players=>{
   const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
   for(const id in peers){
     if(!players[id]) continue;
     const p = players[id].position;
-    const dx=p.x-myPos.x, dy=p.y-myPos.y, dz=p.z-myPos.z;
-    const dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    const dx=p.x-myPos.x, dz=p.z-myPos.z;
+    const dist=Math.sqrt(dx*dx+dz*dz);
     const vol=dist>70?0:dist<20?1:1-(dist-20)/50;
-
     peers[id].gain.gain.value=vol;
-    peers[id].panner.positionX.value=dx;
-    peers[id].panner.positionY.value=dy;
-    peers[id].panner.positionZ.value=dz;
-
-    // Intern speichern
-    lastPlayerState[id] = {
-      position: { x: p.x, y: p.y, z: p.z },
-      distance: dist,
-      volume: vol,
-      lastAudioTime: lastPlayerState[id]?.lastAudioTime || null
-    };
+    logDebug(`👂 ${id} dist=${dist.toFixed(1)} vol=${vol.toFixed(2)}`);
   }
 });
 </script>
