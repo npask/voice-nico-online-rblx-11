@@ -9,6 +9,8 @@ const io = new Server(server);
 
 const players = {}; // socket.id -> { name, position }
 
+app.use(express.static("public"));
+
 io.on("connection", socket => {
   console.log("🔗 User connected:", socket.id);
 
