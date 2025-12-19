@@ -23,13 +23,23 @@ app.post("/pos", (req, res) => {
   if (!data.players) return res.status(400).send("No players sent");
 
   data.players.forEach(p => {
-    players[p.id] = {
-      name: p.name,
-      x: p.position.x,
-      z: p.position.z,
-      socketId: players[p.id]?.socketId || null
-    };
+    // Spieler nur hinzufügen, wenn noch nicht vorhanden
+    if (!players[p.id]) {
+      players[p.id] = {
+        name: p.name,
+        x: p.position.x,
+        z: p.position.z,
+        socketId: null // SocketId kommt später über Socket.IO
+      };
+    } else {
+      // Nur Position aktualisieren
+      players[p.id].x = p.position.x;
+      players[p.id].z = p.position.z;
+    }
   });
+
+  // Update an alle verbundenen Clients senden
+  io.emit("updatePlayers", players);
 
   res.send({ status: "ok" });
 });
@@ -38,17 +48,16 @@ app.post("/pos", (req, res) => {
 io.on("connection", (socket) => {
   console.log(`🔌 User connected: ${socket.id}`);
 
-  socket.on("register", ({ userId, name, position }) => {
-    socket.userId = userId;
-    players[userId] = {
-      name,
-      x: position.x,
-      z: position.z,
-      socketId: socket.id
-    };
-    io.emit("updatePlayers", players);
+  // Wenn Client sich verbindet, suchen wir seinen User via `/pos` bereits gespeicherte Daten
+  socket.on("identify", (userId) => {
+    if (players[userId]) {
+      players[userId].socketId = socket.id; // SocketId setzen
+      socket.userId = userId;
+      socket.emit("init", { player: players[userId], allPlayers: players });
+    }
   });
 
+  // Position-Updates via Socket.IO
   socket.on("updatePosition", ({ position }) => {
     if (!socket.userId) return;
     players[socket.userId].x = position.x;
@@ -56,6 +65,7 @@ io.on("connection", (socket) => {
     io.emit("updatePlayers", players);
   });
 
+  // Voice Event
   socket.on("voice", ({ audio }) => {
     if (!socket.userId) return;
     const sender = players[socket.userId];
@@ -87,6 +97,7 @@ io.on("connection", (socket) => {
     io.emit("updatePlayers", players);
   });
 });
+
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
