@@ -126,7 +126,7 @@ function createPeer(id, initiator){
 // --------------------
 socket.on("user-joined", id=>{
     logDebug("➕ User joined: "+id);
-    createPeer(id,true); // existierender Peer initiiert
+    createPeer(id, false); // existierender Peer initiiert
 });
 
 socket.on("signal", async data=>{
