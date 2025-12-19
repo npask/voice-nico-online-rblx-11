@@ -35,9 +35,9 @@ button:hover{background:#0ea5e9;}
 </div>
 <button id="muteBtn" class="mute" onclick="toggleMute()" disabled>🔇 Mute</button>
 
-<div class="hint">
-Mit dem Beitreten aktivierst du Sprachübertragung zu anderen Spielern.<br>
-Es wird nichts gespeichert oder aufgezeichnet.
+<div id="playerPositions" class="debug" style="max-height:200px;">
+  <strong>🎮 Spieler Positionen:</strong>
+  <ul id="playersList" style="padding-left:16px;margin:4px 0;"></ul>
 </div>
 
 <div id="debug" class="debug"></div>
@@ -49,6 +49,7 @@ const socket = io();
 const audioCtx = new AudioContext();
 let localStream = null;
 const peers = {}; // id -> { pc, gain }
+const pendingCandidates = {}; // id -> ICE array
 
 const debugEl = document.getElementById("debug");
 function logDebug(msg){
@@ -119,18 +120,12 @@ function createPeer(id, initiator){
     }
 
     peers[id] = {pc, gain};
+    pendingCandidates[id] = [];
 }
 
 // --------------------
 // Signaling
 // --------------------
-socket.on("user-joined", id=>{
-    logDebug("➕ User joined: "+id);
-    createPeer(id, true); // existierender Peer initiiert
-});
-
-const pendingCandidates = {}; // id -> [ICE]
-
 socket.on("signal", async data => {
     if(!peers[data.from]) createPeer(data.from,false);
     const peer = peers[data.from];
@@ -141,17 +136,15 @@ socket.on("signal", async data => {
             const desc = new RTCSessionDescription(data.signal.sdp);
 
             if(desc.type === "offer"){
-                // Wenn schon have-local-offer, wir speichern die Offer temporär und antworten später
                 if(peer.pc.signalingState === "stable"){
                     await peer.pc.setRemoteDescription(desc);
                     const ans = await peer.pc.createAnswer();
                     await peer.pc.setLocalDescription(ans);
                     socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
-                    // ICE-Candidates anwenden, die vor der RemoteDesc kamen
                     pendingCandidates[data.from].forEach(c=>peer.pc.addIceCandidate(c));
                     pendingCandidates[data.from] = [];
                 } else {
-                    console.log("Offer gepuffert, signalingState=", peer.pc.signalingState);
+                    logDebug("⏳ Offer gepuffert, signalingState="+peer.pc.signalingState);
                     setTimeout(()=> socket.emit("signal", data), 100);
                 }
             } else if(desc.type === "answer"){
@@ -160,7 +153,7 @@ socket.on("signal", async data => {
                     pendingCandidates[data.from].forEach(c=>peer.pc.addIceCandidate(c));
                     pendingCandidates[data.from] = [];
                 } else {
-                    console.warn("Answer ignoriert, signalingState=", peer.pc.signalingState);
+                    logDebug("⚠️ Answer ignoriert, signalingState="+peer.pc.signalingState);
                 }
             }
         }
@@ -170,7 +163,6 @@ socket.on("signal", async data => {
             if(peer.pc.remoteDescription){
                 await peer.pc.addIceCandidate(ice);
             } else {
-                // noch nicht ready, in Queue speichern
                 pendingCandidates[data.from].push(ice);
             }
         }
@@ -186,15 +178,18 @@ socket.on("user-left", id=>{
     if(peers[id]){
         peers[id].pc.close();
         delete peers[id];
+        delete pendingCandidates[id];
         logDebug("❌ User left: "+id);
     }
 });
 
 // --------------------
-// 2D Distance Audio
+// 2D Distance Audio + Player Positions
 // --------------------
 socket.on("players", players=>{
     const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
+
+    // 1️⃣ Distance Audio
     for(const id in peers){
         if(!players[id]) continue;
         const p = players[id].position;
@@ -203,6 +198,16 @@ socket.on("players", players=>{
         const dist = Math.sqrt(dx*dx + dz*dz);
         const vol = dist>70?0:dist<20?1:1-(dist-20)/50;
         peers[id].gain.gain.value = vol;
+    }
+
+    // 2️⃣ Positionsanzeige
+    const ul = document.getElementById("playersList");
+    ul.innerHTML = "";
+    for(const id in players){
+        const pos = players[id].position;
+        const li = document.createElement("li");
+        li.textContent = `${id} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
+        ul.appendChild(li);
     }
 });
 </script>
