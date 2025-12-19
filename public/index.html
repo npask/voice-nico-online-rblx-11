@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proximity Voice 2D (Server-Relay, Komprimiert)</title>
+<title>Proximity Voice 2D Smooth</title>
 <style>
 body {margin:0;height:100vh;background:radial-gradient(circle at top,#0f172a,#020617);
 font-family:system-ui,sans-serif;color:#e5e7eb;display:flex;align-items:center;justify-content:center;}
@@ -24,7 +24,7 @@ button:hover{background:#0ea5e9;}
 </head>
 <body>
 <div class="card">
-<h1>🎧 Proximity Voice 2D</h1>
+<h1>🎧 Proximity Voice 2D Smooth</h1>
 <p>Private Runde · Freunde only</p>
 <input id="name" placeholder="Dein Name" />
 <button onclick="joinVoice()">Voice beitreten</button>
@@ -51,164 +51,150 @@ const socket = io();
 const audioCtx = new AudioContext();
 let localStream = null;
 let muted = false;
-const players = {}; // id -> {name, position}
+const players = {};
 
-// Remote Audio Nodes: id -> {scriptNode, gainNode, bufferQueue}
-const remoteAudioNodes = {};
-
+// Remote Audio: id -> {gain, queue, bufferIndex, bufferData}
+const remoteAudio = {};
 const debugEl = document.getElementById("debug");
-function logDebug(msg){
-    console.log(msg);
-    debugEl.innerText = msg+"\n"+debugEl.innerText;
-}
+function logDebug(msg){ console.log(msg); debugEl.innerText=msg+"\n"+debugEl.innerText; }
 
-// --------------------
-// Audio Komprimierung
-// --------------------
+// ----------------- Audio Kompression -----------------
 function floatTo16BitPCM(float32Array){
     const buffer = new ArrayBuffer(float32Array.length*2);
     const view = new DataView(buffer);
     for(let i=0;i<float32Array.length;i++){
-        let s = Math.max(-1, Math.min(1, float32Array[i]));
-        view.setInt16(i*2, s<0 ? s*0x8000 : s*0x7FFF, true);
+        let s=Math.max(-1,Math.min(1,float32Array[i]));
+        view.setInt16(i*2, s<0?s*0x8000:s*0x7FFF, true);
     }
     return buffer;
 }
 function PCM16ToFloat32(buffer){
     const view = new DataView(buffer);
     const f32 = new Float32Array(buffer.byteLength/2);
-    for(let i=0;i<f32.length;i++){
-        f32[i] = view.getInt16(i*2,true)/0x7FFF;
-    }
+    for(let i=0;i<f32.length;i++) f32[i]=view.getInt16(i*2,true)/0x7FFF;
     return f32;
 }
 
-// --------------------
-// Join Voice
-// --------------------
+// ----------------- Join Voice -----------------
 async function joinVoice(){
-    const name = document.getElementById("name").value.trim();
+    const name=document.getElementById("name").value.trim();
     if(!name) return alert("Name fehlt 😅");
 
-    localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    localStream=await navigator.mediaDevices.getUserMedia({audio:true});
     await audioCtx.resume();
     logDebug("✅ AudioContext resumed, mic active");
-
     socket.emit("join", name);
 
     document.getElementById("micDot").classList.add("active");
-    document.getElementById("micText").innerText = "Mikrofon aktiv";
-    document.getElementById("muteBtn").disabled = false;
+    document.getElementById("micText").innerText="Mikrofon aktiv";
+    document.getElementById("muteBtn").disabled=false;
 
-    // Lokales Audio in Float32Array streamen
-    const processor = audioCtx.createScriptProcessor(1024,1,1);
-    const source = audioCtx.createMediaStreamSource(localStream);
+    const processor=audioCtx.createScriptProcessor(2048,1,1);
+    const source=audioCtx.createMediaStreamSource(localStream);
     source.connect(processor);
-    processor.connect(audioCtx.destination); // optional lokal hören
+    processor.connect(audioCtx.destination);
 
-    processor.onaudioprocess = e => {
+    processor.onaudioprocess=e=>{
         if(!muted){
-            const data = e.inputBuffer.getChannelData(0);
-            const buf = floatTo16BitPCM(data);
+            const data=e.inputBuffer.getChannelData(0);
+            const buf=floatTo16BitPCM(data);
             socket.emit("voice", buf);
         }
     };
 }
 
-// --------------------
-// Mute toggle
-// --------------------
+// ----------------- Mute -----------------
 function toggleMute(){
     if(!localStream) return;
-    muted = !muted;
-    localStream.getAudioTracks()[0].enabled = !muted;
-    document.getElementById("muteBtn").innerText = muted?"🎤 Unmute":"🔇 Mute";
-    document.getElementById("micText").innerText = muted?"Mikrofon stumm":"Mikrofon aktiv";
+    muted=!muted;
+    localStream.getAudioTracks()[0].enabled=!muted;
+    document.getElementById("muteBtn").innerText=muted?"🎤 Unmute":"🔇 Mute";
+    document.getElementById("micText").innerText=muted?"Mikrofon stumm":"Mikrofon aktiv";
     logDebug("🔇 Mute toggled: "+muted);
 }
 
-// --------------------
-// Remote Audio abspielen
-// --------------------
-socket.on("voice", (data, fromId)=>{
-    if(fromId === socket.id) return;
-    if(!remoteAudioNodes[fromId]){
-        const gain = audioCtx.createGain();
-        gain.connect(audioCtx.destination);
+// ----------------- Remote Audio -----------------
+function createRemoteNode(id){
+    const gain=audioCtx.createGain();
+    gain.connect(audioCtx.destination);
+    remoteAudio[id]={gain, queue:[], bufferIndex:0, bufferData:null};
+}
 
-        const script = audioCtx.createScriptProcessor(1024,1,1);
-        script.connect(gain);
+socket.on("voice",(data,fromId)=>{
+    if(fromId===socket.id) return;
+    if(!remoteAudio[fromId]) createRemoteNode(fromId);
 
-        remoteAudioNodes[fromId] = {scriptNode: script, gainNode: gain, bufferQueue: []};
-    }
-
-    const node = remoteAudioNodes[fromId];
-    const floatData = PCM16ToFloat32(data);
-    node.bufferQueue.push(floatData);
+    remoteAudio[fromId].queue.push(PCM16ToFloat32(data));
 });
 
-// ScriptProcessor für Queue
+// ScriptProcessor für smooth playback mit Fade
 function processRemoteAudio(){
-    for(const id in remoteAudioNodes){
-        const node = remoteAudioNodes[id];
-        if(node.bufferQueue.length===0) continue;
-        const buffer = node.bufferQueue.shift();
-        const script = node.scriptNode;
-        script.onaudioprocess = e=>{
-            const output = e.outputBuffer.getChannelData(0);
-            for(let i=0;i<output.length && i<buffer.length;i++) output[i]=buffer[i];
-        };
+    for(const id in remoteAudio){
+        const node=remoteAudio[id];
+        if(node.bufferData==null && node.queue.length>0){
+            node.bufferData=node.queue.shift();
+            node.bufferIndex=0;
+        }
+        if(node.bufferData){
+            const buffer=node.bufferData;
+            const scriptNode=audioCtx.createScriptProcessor(1024,1,1);
+            scriptNode.connect(node.gain);
+            scriptNode.onaudioprocess=e=>{
+                const output=e.outputBuffer.getChannelData(0);
+                for(let i=0;i<output.length;i++){
+                    if(node.bufferIndex<buffer.length){
+                        output[i]=buffer[node.bufferIndex++];
+                        // kleiner Fade am Ende
+                        if(node.bufferIndex>buffer.length-32){
+                            output[i]*=(buffer.length-node.bufferIndex)/32;
+                        }
+                    }else{
+                        output[i]=0;
+                        node.bufferData=null;
+                    }
+                }
+            };
+        }
     }
     requestAnimationFrame(processRemoteAudio);
 }
 processRemoteAudio();
 
-// --------------------
-// 2D Distance Audio
-// --------------------
+// ----------------- 2D Distance Audio -----------------
 function update2DAudio(){
-    const myPos = players[socket.id]?.position || {x:0,z:0};
-    for(const id in remoteAudioNodes){
+    const myPos=players[socket.id]?.position||{x:0,z:0};
+    for(const id in remoteAudio){
         if(!players[id]) continue;
-        const p = players[id].position;
-        const dx = p.x - myPos.x;
-        const dz = p.z - myPos.z;
-        const dist = Math.sqrt(dx*dx + dz*dz);
-        const vol = dist>70?0:dist<20?1:1-(dist-20)/50;
-        remoteAudioNodes[id].gainNode.gain.value = vol;
+        const p=players[id].position;
+        const dx=p.x-myPos.x;
+        const dz=p.z-myPos.z;
+        const dist=Math.sqrt(dx*dx+dz*dz);
+        remoteAudio[id].gain.gain.value=dist>70?0:dist<20?1:1-(dist-20)/50;
     }
 }
 setInterval(update2DAudio,50);
 
-// --------------------
-// Spieler Updates
-// --------------------
+// ----------------- Spieler Updates -----------------
 socket.on("players", data=>{
-    Object.assign(players, data);
-    const ul = document.getElementById("playersList");
-    ul.innerHTML = "";
+    Object.assign(players,data);
+    const ul=document.getElementById("playersList");
+    ul.innerHTML="";
     for(const id in players){
-        const pos = players[id].position;
-        const li = document.createElement("li");
-        li.textContent = `${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
+        const pos=players[id].position;
+        const li=document.createElement("li");
+        li.textContent=`${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
         ul.appendChild(li);
     }
 });
 
-// --------------------
-// Ping anzeigen
-// --------------------
-let lastPingTime = 0;
-function updatePing(){
-    lastPingTime = Date.now();
+// ----------------- Ping -----------------
+let lastPingTime=0;
+setInterval(()=>{
+    lastPingTime=Date.now();
     socket.emit("ping");
-}
-setInterval(updatePing,2000);
+},2000);
 
-socket.on("pong", ()=>{
-    const ping = Date.now()-lastPingTime;
-    document.getElementById("pingDisplay").innerText = "📶 Ping: "+ping+"ms";
-});
+socket.on("pong",()=>document.getElementById("pingDisplay").innerText="📶 Ping: "+(Date.now()-lastPingTime)+"ms");
 </script>
 </body>
 </html>
