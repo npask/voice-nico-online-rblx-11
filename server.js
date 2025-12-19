@@ -9,71 +9,99 @@ const cors = require("cors");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-  },
+  cors: { origin: "*" },
 });
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static("public"));
 
-let players = {}; // speichert aktuelle Spieler-Positionen {id: {x,y,z,name}}
+const HEARING_RADIUS = 50;
 
+// Spieler speichern: userId -> {name, x, z, socketId}
+let players = {};
+
+// ------------------ Roblox /pos Endpoint ------------------
 app.post("/pos", (req, res) => {
   const data = req.body;
   if (!data.players) return res.status(400).send("No players sent");
-  
+
   data.players.forEach(p => {
     players[p.id] = {
       name: p.name,
-      position: p.position
+      x: p.position.x,
+      z: p.position.z,
+      socketId: null // keine SocketId für reine HTTP Daten
     };
   });
-  
+
   res.send({ status: "ok" });
 });
 
-// ================================
-// Socket.IO für 2D Proximity Audio
-// ================================
+// ------------------ Socket.IO ------------------
 io.on("connection", (socket) => {
-  console.log(`🎧 User connected: ${socket.id}`);
+  console.log(`🔌 User connected: ${socket.id}`);
 
-  // Client sendet eigene Position
-  socket.on("updatePosition", (data) => {
-    socket.position = data.position; // {x, y, z}
+  // Spieler registrieren (Roblox UserId)
+  socket.on("register", ({ userId, name, position }) => {
+    socket.userId = userId;
+    players[userId] = {
+      name,
+      x: position.x,
+      z: position.z,
+      socketId: socket.id
+    };
+    io.emit("updatePlayers", players);
   });
 
-socket.on("voice", (data) => {
-  const senderPos = socket.position || {x:0, z:0};
-  for (let [id, s] of io.sockets.sockets) {
-    if (id === socket.id) continue;
-    if (!s.position) continue;
+  // Position aktualisieren
+  socket.on("updatePosition", ({ position }) => {
+    if (!socket.userId) return;
+    players[socket.userId].x = position.x;
+    players[socket.userId].z = position.z;
+    io.emit("updatePlayers", players);
+  });
 
-    const dx = s.position.x - senderPos.x;
-    const dz = s.position.z - senderPos.z;
-    const dist = Math.sqrt(dx*dx + dz*dz);
+  // Voice Event
+  socket.on("voice", ({ audio }) => {
+    if (!socket.userId) return;
+    const sender = players[socket.userId];
+    if (!sender) return;
 
-    if(dist > 50) continue; // nicht hören, außerhalb Radius
+    for (let id in players) {
+      if (id === socket.userId) continue;
+      const p = players[id];
+      if (!p.socketId) continue;
 
-    let volume = 1 - (dist / 50);
-    if(volume < 0) volume = 0;
+      const dx = p.x - sender.x;
+      const dz = p.z - sender.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+      if (dist > HEARING_RADIUS) continue;
 
-    s.emit("voice", {
-      audio: data.audio,
-      fromX: senderPos.x,
-      fromZ: senderPos.z,
-      volume
-    });
-  }
-});
+      const volume = 1 - (dist / HEARING_RADIUS);
+      const targetSocket = io.sockets.sockets.get(p.socketId);
+      if (targetSocket) {
+        targetSocket.emit("voice", {
+          audio,
+          fromX: sender.x,
+          fromZ: sender.z,
+          volume
+        });
+      }
+    }
+  });
 
   socket.on("disconnect", () => {
     console.log(`❌ User disconnected: ${socket.id}`);
+    // Optional: Spieler löschen, wenn SocketId existierte
+    for (let id in players) {
+      if (players[id].socketId === socket.id) delete players[id].socketId;
+    }
+    io.emit("updatePlayers", players);
   });
 });
 
-server.listen(3000, () => {
-  console.log("🌐 Server läuft auf http://localhost:3000");
+// ------------------ Server starten ------------------
+const PORT = 3000;
+server.listen(PORT, () => {
+  console.log(`🌐 Server läuft auf http://localhost:${PORT}`);
 });
