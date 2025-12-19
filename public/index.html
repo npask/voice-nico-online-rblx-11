@@ -48,9 +48,11 @@ button:hover{background:#0ea5e9;}
 const socket = io();
 const audioCtx = new AudioContext();
 let localStream = null;
-const peers = {}; // id -> { pc, gain, name }
-const pendingCandidates = {}; // id -> ICE array
+let muted = false;
 const players = {}; // id -> {name, position}
+
+// Audio Puffer für jeden Spieler
+const remoteAudioBuffers = {}; // id -> ScriptProcessorNode
 
 const debugEl = document.getElementById("debug");
 function logDebug(msg){
@@ -74,12 +76,25 @@ async function joinVoice(){
     document.getElementById("micDot").classList.add("active");
     document.getElementById("micText").innerText = "Mikrofon aktiv";
     document.getElementById("muteBtn").disabled = false;
+
+    // Lokales Audio in Float32Array streamen
+    const processor = audioCtx.createScriptProcessor(1024,1,1);
+    const source = audioCtx.createMediaStreamSource(localStream);
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    processor.onaudioprocess = e => {
+        if(!muted){
+            const data = e.inputBuffer.getChannelData(0);
+            // Float32Array in Array senden
+            socket.emit("voice", Array.from(data));
+        }
+    };
 }
 
 // --------------------
 // Mute toggle
 // --------------------
-let muted = false;
 function toggleMute(){
     if(!localStream) return;
     muted = !muted;
@@ -90,112 +105,32 @@ function toggleMute(){
 }
 
 // --------------------
-// Create Peer
+// Remote Audio abspielen
 // --------------------
-function createPeer(id, initiator, name){
-    if(!localStream){ logDebug("⚠️ localStream noch nicht bereit für " + id); return; }
-    if(peers[id]) return;
+socket.on("voice", (data, fromId) => {
+    if(!remoteAudioBuffers[fromId]){
+        const script = audioCtx.createScriptProcessor(1024,1,1);
+        script.connect(audioCtx.destination);
+        remoteAudioBuffers[fromId] = script;
+    }
 
-    const pc = new RTCPeerConnection();
-    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    const buffer = new Float32Array(data);
+    const script = remoteAudioBuffers[fromId];
+    let offset = 0;
 
-    const gain = audioCtx.createGain();
-    gain.gain.value = 1;
-    gain.connect(audioCtx.destination);
-
-    pc.ontrack = e => {
-        const src = audioCtx.createMediaStreamSource(e.streams[0]);
-        src.connect(gain);
-        logDebug("🎧 Track received from "+name+" ("+id+")");
+    script.onaudioprocess = e => {
+        const output = e.outputBuffer.getChannelData(0);
+        for(let i=0;i<output.length && offset<buffer.length;i++,offset++){
+            output[i] = buffer[offset];
+        }
     };
-
-    pc.onicecandidate = e => {
-        if(e.candidate) socket.emit("signal",{to:id, signal:{ice:e.candidate}});
-    };
-
-    peers[id] = { pc, gain, name };
-
-    // WICHTIG: Initiator nur der „first joiner“ oder nach Regel
-    if(initiator){
-        pc.createOffer().then(o=>{
-            pc.setLocalDescription(o);
-            socket.emit("signal",{to:id, signal:{sdp:o}});
-        });
-    }
-}
-
-
-// --------------------
-// Signaling
-// --------------------
-socket.on("signal", async data => {
-    if(!peers[data.from]){
-        const name = players[data.from]?.name || "unbekannt";
-        createPeer(data.from,false,name); // immer Responder
-    }
-    const peer = peers[data.from];
-    
-    try {
-        if(data.signal.sdp){
-            const desc = new RTCSessionDescription(data.signal.sdp);
-
-            if(desc.type === "offer"){
-                // Responder: setzt RemoteDescription, erstellt Answer
-                if(peer.pc.signalingState === "stable"){
-                    await peer.pc.setRemoteDescription(desc);
-                    const ans = await peer.pc.createAnswer();
-                    await peer.pc.setLocalDescription(ans);
-                    socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
-                }
-            } else if(desc.type === "answer"){
-                // Initiator: setzt remoteDescription nur bei have-local-offer
-                if(peer.pc.signalingState === "have-local-offer"){
-                    await peer.pc.setRemoteDescription(desc);
-                }
-            }
-        }
-
-        if(data.signal.ice){
-            const ice = new RTCIceCandidate(data.signal.ice);
-            if(peer.pc.remoteDescription){
-                await peer.pc.addIceCandidate(ice);
-            } else {
-                if(!peer.pendingCandidates) peer.pendingCandidates = [];
-                peer.pendingCandidates.push(ice);
-            }
-        }
-
-        // nach remoteDescription alle gepufferten ICE Candidates hinzufügen
-        if(peer.pc.remoteDescription && peer.pendingCandidates){
-            peer.pendingCandidates.forEach(c=>peer.pc.addIceCandidate(c));
-            peer.pendingCandidates = [];
-        }
-
-    } catch(e){
-        console.error("Fehler im Signal:", e);
-    }
 });
 
-
 // --------------------
-// Player Updates
+// Spieler Updates
 // --------------------
 socket.on("players", data=>{
     Object.assign(players, data);
-
-    // Distance Audio
-    const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
-    for(const id in peers){
-        if(!players[id]) continue;
-        const p = players[id].position;
-        const dx = p.x - myPos.x;
-        const dz = p.z - myPos.z;
-        const dist = Math.sqrt(dx*dx + dz*dz);
-        const vol = dist>70?0:dist<20?1:1-(dist-20)/50;
-        peers[id].gain.gain.value = vol;
-    }
-
-    // Player Position List
     const ul = document.getElementById("playersList");
     ul.innerHTML = "";
     for(const id in players){
@@ -209,19 +144,19 @@ socket.on("players", data=>{
 // --------------------
 // User join/left
 // --------------------
-socket.on("user-joined", id => {
-    if(!peers[id]){
-        const name = players[id]?.name || "unbekannt";
-        createPeer(id,true,name);
-    }
-});
-
 socket.on("user-left", id => {
-    if(peers[id]){
-        peers[id].pc.close();
-        delete peers[id];
-        delete pendingCandidates[id];
-        logDebug("❌ User left: "+id);
+    if(remoteAudioBuffers[id]){
+        remoteAudioBuffers[id].disconnect();
+        delete remoteAudioBuffers[id];
+    }
+    delete players[id];
+    const ul = document.getElementById("playersList");
+    ul.innerHTML = "";
+    for(const id in players){
+        const pos = players[id].position;
+        const li = document.createElement("li");
+        li.textContent = `${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
+        ul.appendChild(li);
     }
 });
 </script>
