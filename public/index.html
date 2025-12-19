@@ -132,15 +132,33 @@ socket.on("user-joined", id=>{
 socket.on("signal", async data=>{
     if(!peers[data.from]) createPeer(data.from,false);
     const peer = peers[data.from];
-    if(data.signal.sdp){
-        await peer.pc.setRemoteDescription(data.signal.sdp);
-        if(data.signal.sdp.type==="offer"){
-            const ans = await peer.pc.createAnswer();
-            await peer.pc.setLocalDescription(ans);
-            socket.emit("signal",{to:data.from, signal:{sdp:ans}});
+
+    try {
+        if(data.signal.sdp){
+            const desc = new RTCSessionDescription(data.signal.sdp);
+
+            // nur Offer akzeptieren, wenn Connection noch stable oder have-local-offer
+            if(desc.type === "offer"){
+                await peer.pc.setRemoteDescription(desc);
+                const ans = await peer.pc.createAnswer();
+                await peer.pc.setLocalDescription(ans);
+                socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
+            } else if(desc.type === "answer"){
+                // nur Answer setzen, wenn vorher eine lokale Offer gemacht wurde
+                if(peer.pc.signalingState === "have-local-offer"){
+                    await peer.pc.setRemoteDescription(desc);
+                } else {
+                    console.warn("Answer ignoriert: falscher State", peer.pc.signalingState);
+                }
+            }
         }
+
+        if(data.signal.ice){
+            await peer.pc.addIceCandidate(new RTCIceCandidate(data.signal.ice));
+        }
+    } catch(e){
+        console.error("Fehler im Signal:", e);
     }
-    if(data.signal.ice) await peer.pc.addIceCandidate(data.signal.ice);
 });
 
 // --------------------
