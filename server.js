@@ -1,64 +1,72 @@
+// ================================
+// Node.js + Socket.IO Server
+// ================================
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const cors = require("cors");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
 
+app.use(cors());
 app.use(express.json());
-app.use(express.static("public"));
 
-const players = {}; // id -> {name, position}
+let players = {}; // speichert aktuelle Spieler-Positionen {id: {x,y,z,name}}
 
-// --------------------
-// Socket.IO für Voice + Ping
-// --------------------
-io.on("connection", socket=>{
-    console.log("🔗 User connected:", socket.id);
+app.post("/pos", (req, res) => {
+  const data = req.body;
+  if (!data.players) return res.status(400).send("No players sent");
+  
+  data.players.forEach(p => {
+    players[p.id] = {
+      name: p.name,
+      position: p.position
+    };
+  });
+  
+  res.send({ status: "ok" });
+});
 
-// server.js
-socket.on("join", name=>{
-    if(players[socket.id]){
-        players[socket.id].name = name;
-        socket.emit("players", players); // sofort aktuelle Spieler senden
-        socket.broadcast.emit("user-joined", socket.id);
+// ================================
+// Socket.IO für 2D Proximity Audio
+// ================================
+io.on("connection", (socket) => {
+  console.log(`🎧 User connected: ${socket.id}`);
+
+  // Client sendet eigene Position
+  socket.on("updatePosition", (data) => {
+    socket.position = data.position; // {x, y, z}
+  });
+
+  // Client sendet Audio Chunk
+  socket.on("voice", (data) => {
+    // Broadcast an alle anderen mit Lautstärke basierend auf Distance
+    for (let [id, s] of io.sockets.sockets) {
+      if (id === socket.id) continue;
+      if (!s.position) continue;
+
+      const dx = s.position.x - socket.position.x;
+      const dz = s.position.z - socket.position.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+
+      let volume = 1 - (dist / 50); // 50 = Max Distanz, danach stumm
+      if (volume <= 0) volume = 0;
+
+      s.emit("voice", { audio: data.audio, volume });
     }
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`❌ User disconnected: ${socket.id}`);
+  });
 });
 
-
-
-    socket.on("voice", (data)=>{
-        // Broadcast an alle anderen Spieler
-        socket.broadcast.emit("voice", data, socket.id);
-    });
-
-    socket.on("ping", ()=>socket.emit("pong"));
-
-    socket.on("disconnect", ()=>{
-        delete players[socket.id];
-        socket.broadcast.emit("user-left", socket.id);
-    });
+server.listen(3000, () => {
+  console.log("🌐 Server läuft auf http://localhost:3000");
 });
-
-// --------------------
-// Roblox POST /pos
-// --------------------
-app.post("/pos", (req,res)=>{
-    const { players: sentPlayers } = req.body; // [{id,name,position}]
-    if(!sentPlayers || !Array.isArray(sentPlayers)) return res.status(400).send("Missing players array");
-
-    sentPlayers.forEach(p=>{
-        if(!p.id || !p.position || !p.name) return;
-        // Nur existierende Spieler updaten
-        if(players[p.id]){
-            players[p.id].position = p.position;
-        }
-    });
-
-    // Broadcast an alle Clients
-    io.emit("players", players);
-    res.send("Positions updated ✅");
-});
-
-server.listen(3000, ()=>console.log("Server running on port 3000"));
