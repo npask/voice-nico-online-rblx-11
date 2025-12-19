@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proximity Voice Debug 2D</title>
+<title>Proximity Voice 2D (Server-Relay)</title>
 <style>
 body {margin:0;height:100vh;background:radial-gradient(circle at top,#0f172a,#020617);
 font-family:system-ui,sans-serif;color:#e5e7eb;display:flex;align-items:center;justify-content:center;}
@@ -24,7 +24,7 @@ button:hover{background:#0ea5e9;}
 </head>
 <body>
 <div class="card">
-<h1>🎧 Proximity Voice Debug 2D</h1>
+<h1>🎧 Proximity Voice 2D</h1>
 <p>Private Runde · Freunde only</p>
 <input id="name" placeholder="Dein Name" />
 <button onclick="joinVoice()">Voice beitreten</button>
@@ -51,8 +51,8 @@ let localStream = null;
 let muted = false;
 const players = {}; // id -> {name, position}
 
-// Audio Puffer für jeden Spieler
-const remoteAudioBuffers = {}; // id -> ScriptProcessorNode
+// Remote Audio Nodes: id -> {scriptNode, gainNode, bufferQueue}
+const remoteAudioNodes = {};
 
 const debugEl = document.getElementById("debug");
 function logDebug(msg){
@@ -81,12 +81,11 @@ async function joinVoice(){
     const processor = audioCtx.createScriptProcessor(1024,1,1);
     const source = audioCtx.createMediaStreamSource(localStream);
     source.connect(processor);
-    processor.connect(audioCtx.destination);
+    processor.connect(audioCtx.destination); // optional lokal hören
 
     processor.onaudioprocess = e => {
         if(!muted){
             const data = e.inputBuffer.getChannelData(0);
-            // Float32Array in Array senden
             socket.emit("voice", Array.from(data));
         }
     };
@@ -108,23 +107,54 @@ function toggleMute(){
 // Remote Audio abspielen
 // --------------------
 socket.on("voice", (data, fromId) => {
-    if(!remoteAudioBuffers[fromId]){
+    if(fromId === socket.id) return; // eigenen Stream ignorieren
+    if(!remoteAudioNodes[fromId]){
+        const gain = audioCtx.createGain();
+        gain.connect(audioCtx.destination);
+
         const script = audioCtx.createScriptProcessor(1024,1,1);
-        script.connect(audioCtx.destination);
-        remoteAudioBuffers[fromId] = script;
+        script.connect(gain);
+
+        remoteAudioNodes[fromId] = {scriptNode: script, gainNode: gain, bufferQueue: []};
     }
 
     const buffer = new Float32Array(data);
-    const script = remoteAudioBuffers[fromId];
-    let offset = 0;
-
-    script.onaudioprocess = e => {
-        const output = e.outputBuffer.getChannelData(0);
-        for(let i=0;i<output.length && offset<buffer.length;i++,offset++){
-            output[i] = buffer[offset];
-        }
-    };
+    const node = remoteAudioNodes[fromId];
+    node.bufferQueue.push(buffer);
 });
+
+// ScriptProcessor zum Abspielen der Queue
+function processRemoteAudio(){
+    for(const id in remoteAudioNodes){
+        const node = remoteAudioNodes[id];
+        if(node.bufferQueue.length===0) continue;
+        const buffer = node.bufferQueue.shift();
+        const output = node.scriptNode.onaudioprocess;
+        node.scriptNode.onaudioprocess = e=>{
+            const out = e.outputBuffer.getChannelData(0);
+            for(let i=0;i<out.length && i<buffer.length;i++) out[i]=buffer[i];
+        };
+    }
+    requestAnimationFrame(processRemoteAudio);
+}
+processRemoteAudio();
+
+// --------------------
+// 2D Distance Audio
+// --------------------
+function update2DAudio(){
+    const myPos = players[socket.id]?.position || {x:0,z:0};
+    for(const id in remoteAudioNodes){
+        if(!players[id]) continue;
+        const p = players[id].position;
+        const dx = p.x - myPos.x;
+        const dz = p.z - myPos.z;
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        const vol = dist>70?0:dist<20?1:1-(dist-20)/50;
+        remoteAudioNodes[id].gainNode.gain.value = vol;
+    }
+}
+setInterval(update2DAudio,50);
 
 // --------------------
 // Spieler Updates
@@ -144,20 +174,13 @@ socket.on("players", data=>{
 // --------------------
 // User join/left
 // --------------------
-socket.on("user-left", id => {
-    if(remoteAudioBuffers[id]){
-        remoteAudioBuffers[id].disconnect();
-        delete remoteAudioBuffers[id];
+socket.on("user-left", id=>{
+    if(remoteAudioNodes[id]){
+        remoteAudioNodes[id].scriptNode.disconnect();
+        remoteAudioNodes[id].gainNode.disconnect();
+        delete remoteAudioNodes[id];
     }
     delete players[id];
-    const ul = document.getElementById("playersList");
-    ul.innerHTML = "";
-    for(const id in players){
-        const pos = players[id].position;
-        const li = document.createElement("li");
-        li.textContent = `${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
-        ul.appendChild(li);
-    }
 });
 </script>
 </body>
