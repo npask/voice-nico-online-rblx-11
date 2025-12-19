@@ -45,7 +45,7 @@ window.addEventListener("resize", () => {
 });
 
 // Socket.IO
-const socket = io("https://dein-server-url");
+const socket = io();
 
 // Spieler Daten
 let players = {}; // id -> {x, y, name, selected}
