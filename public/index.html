@@ -126,10 +126,10 @@ function createPeer(id, initiator){
 // --------------------
 socket.on("user-joined", id=>{
     logDebug("➕ User joined: "+id);
-    createPeer(id, false); // existierender Peer initiiert
+    createPeer(id, true); // existierender Peer initiiert
 });
 
-socket.on("signal", async data=>{
+socket.on("signal", async data => {
     if(!peers[data.from]) createPeer(data.from,false);
     const peer = peers[data.from];
 
@@ -137,29 +137,38 @@ socket.on("signal", async data=>{
         if(data.signal.sdp){
             const desc = new RTCSessionDescription(data.signal.sdp);
 
-            // nur Offer akzeptieren, wenn Connection noch stable oder have-local-offer
             if(desc.type === "offer"){
-                await peer.pc.setRemoteDescription(desc);
-                const ans = await peer.pc.createAnswer();
-                await peer.pc.setLocalDescription(ans);
-                socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
+                // nur wenn remoteDescription noch nicht gesetzt
+                if(peer.pc.signalingState === "stable"){
+                    await peer.pc.setRemoteDescription(desc);
+                    const ans = await peer.pc.createAnswer();
+                    await peer.pc.setLocalDescription(ans);
+                    socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
+                } else {
+                    console.warn("Offer ignoriert: signalingState=", peer.pc.signalingState);
+                }
             } else if(desc.type === "answer"){
-                // nur Answer setzen, wenn vorher eine lokale Offer gemacht wurde
+                // nur wenn wir vorher eine lokale Offer gemacht haben
                 if(peer.pc.signalingState === "have-local-offer"){
                     await peer.pc.setRemoteDescription(desc);
                 } else {
-                    console.warn("Answer ignoriert: falscher State", peer.pc.signalingState);
+                    console.warn("Answer ignoriert: signalingState=", peer.pc.signalingState);
                 }
             }
         }
 
         if(data.signal.ice){
-            await peer.pc.addIceCandidate(new RTCIceCandidate(data.signal.ice));
+            try{
+                await peer.pc.addIceCandidate(new RTCIceCandidate(data.signal.ice));
+            } catch(e){
+                console.warn("ICE Candidate ignored:", e);
+            }
         }
     } catch(e){
         console.error("Fehler im Signal:", e);
     }
 });
+
 
 // --------------------
 // User disconnect
