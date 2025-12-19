@@ -30,12 +30,17 @@ app.post("/positions", (req, res) => {
 });
 
 io.on("connection", socket => {
-  socket.on("join", name => {
-    players[socket.id] = players[socket.id] || {
-      name,
-      position: { x: 0, y: 0, z: 0 }
-    };
-  });
+socket.on("join", name => {
+  players[socket.id] = { name, position: { x:0, y:0, z:0 } };
+  
+  // sag allen anderen
+  socket.broadcast.emit("user-joined", socket.id);
+
+  // optional: sag dem Joiner, wer schon da ist
+  const otherIds = Object.keys(players).filter(id => id !== socket.id);
+  otherIds.forEach(id => socket.emit("user-joined", id));
+});
+
 
   socket.on("disconnect", () => {
     delete players[socket.id];
