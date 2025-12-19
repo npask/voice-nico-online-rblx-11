@@ -42,18 +42,20 @@ io.on("connection", socket => {
 // ------------------- HTTP Endpoint für Roblox -------------------
 // Roblox Server sendet Spielerpositionen per POST
 app.post("/pos", (req, res) => {
-  const { id, position } = req.body; // erwartet { id: "playerId", position: {x,y,z} }
-  if(!id || !position) return res.status(400).send("Missing id or position");
+  const { players: sentPlayers } = req.body; // erwartet { players: [ {id, name, position}, ... ] }
+  if(!sentPlayers || !Array.isArray(sentPlayers)) return res.status(400).send("Missing players array");
 
-  // Update oder erstelle Spieler
-  if(!players[id]) players[id] = { name: "RobloxPlayer", position };
-  else players[id].position = position;
+  sentPlayers.forEach(p => {
+    if(!p.id || !p.position || !p.name) return; // skip invalid
+    players[p.id] = { name: p.name, position: p.position };
+  });
 
   // Optional: Socket.IO Broadcast, falls Clients das live sehen sollen
   io.emit("players", players);
 
-  res.send("Position updated ✅");
+  res.send("Positions updated ✅");
 });
+
 
 // optional: alle 100ms alle Positionen an alle senden
 setInterval(()=>{
