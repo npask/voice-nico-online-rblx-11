@@ -16,7 +16,7 @@ document.getElementById("startBtn").addEventListener("click", ()=>{
   const name=document.getElementById("playerName").value||"Ich";
   if(!id)return alert("Bitte Roblox UserId eingeben!");
   localPlayer={userId:id,name:name,x:0,z:0};
-  socket.emit("register",{userId:id,name:name,position:{x:0,z:0}});
+  socket.emit("identify", id);
   document.getElementById("selectPlayer").style.display="none";
   startProximity();
 });
