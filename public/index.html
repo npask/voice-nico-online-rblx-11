@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proximity Voice 2D (Server-Relay)</title>
+<title>Proximity Voice 2D (Server-Relay, Komprimiert)</title>
 <style>
 body {margin:0;height:100vh;background:radial-gradient(circle at top,#0f172a,#020617);
 font-family:system-ui,sans-serif;color:#e5e7eb;display:flex;align-items:center;justify-content:center;}
@@ -35,6 +35,8 @@ button:hover{background:#0ea5e9;}
 </div>
 <button id="muteBtn" class="mute" onclick="toggleMute()" disabled>🔇 Mute</button>
 
+<div id="pingDisplay" class="hint">📶 Ping: 0ms</div>
+
 <div id="playerPositions" class="debug" style="max-height:200px;">
   <strong>🎮 Spieler Positionen:</strong>
   <ul id="playersList" style="padding-left:16px;margin:4px 0;"></ul>
@@ -58,6 +60,27 @@ const debugEl = document.getElementById("debug");
 function logDebug(msg){
     console.log(msg);
     debugEl.innerText = msg+"\n"+debugEl.innerText;
+}
+
+// --------------------
+// Audio Komprimierung
+// --------------------
+function floatTo16BitPCM(float32Array){
+    const buffer = new ArrayBuffer(float32Array.length*2);
+    const view = new DataView(buffer);
+    for(let i=0;i<float32Array.length;i++){
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        view.setInt16(i*2, s<0 ? s*0x8000 : s*0x7FFF, true);
+    }
+    return buffer;
+}
+function PCM16ToFloat32(buffer){
+    const view = new DataView(buffer);
+    const f32 = new Float32Array(buffer.byteLength/2);
+    for(let i=0;i<f32.length;i++){
+        f32[i] = view.getInt16(i*2,true)/0x7FFF;
+    }
+    return f32;
 }
 
 // --------------------
@@ -86,7 +109,8 @@ async function joinVoice(){
     processor.onaudioprocess = e => {
         if(!muted){
             const data = e.inputBuffer.getChannelData(0);
-            socket.emit("voice", Array.from(data));
+            const buf = floatTo16BitPCM(data);
+            socket.emit("voice", buf);
         }
     };
 }
@@ -106,8 +130,8 @@ function toggleMute(){
 // --------------------
 // Remote Audio abspielen
 // --------------------
-socket.on("voice", (data, fromId) => {
-    if(fromId === socket.id) return; // eigenen Stream ignorieren
+socket.on("voice", (data, fromId)=>{
+    if(fromId === socket.id) return;
     if(!remoteAudioNodes[fromId]){
         const gain = audioCtx.createGain();
         gain.connect(audioCtx.destination);
@@ -118,21 +142,21 @@ socket.on("voice", (data, fromId) => {
         remoteAudioNodes[fromId] = {scriptNode: script, gainNode: gain, bufferQueue: []};
     }
 
-    const buffer = new Float32Array(data);
     const node = remoteAudioNodes[fromId];
-    node.bufferQueue.push(buffer);
+    const floatData = PCM16ToFloat32(data);
+    node.bufferQueue.push(floatData);
 });
 
-// ScriptProcessor zum Abspielen der Queue
+// ScriptProcessor für Queue
 function processRemoteAudio(){
     for(const id in remoteAudioNodes){
         const node = remoteAudioNodes[id];
         if(node.bufferQueue.length===0) continue;
         const buffer = node.bufferQueue.shift();
-        const output = node.scriptNode.onaudioprocess;
-        node.scriptNode.onaudioprocess = e=>{
-            const out = e.outputBuffer.getChannelData(0);
-            for(let i=0;i<out.length && i<buffer.length;i++) out[i]=buffer[i];
+        const script = node.scriptNode;
+        script.onaudioprocess = e=>{
+            const output = e.outputBuffer.getChannelData(0);
+            for(let i=0;i<output.length && i<buffer.length;i++) output[i]=buffer[i];
         };
     }
     requestAnimationFrame(processRemoteAudio);
@@ -172,15 +196,18 @@ socket.on("players", data=>{
 });
 
 // --------------------
-// User join/left
+// Ping anzeigen
 // --------------------
-socket.on("user-left", id=>{
-    if(remoteAudioNodes[id]){
-        remoteAudioNodes[id].scriptNode.disconnect();
-        remoteAudioNodes[id].gainNode.disconnect();
-        delete remoteAudioNodes[id];
-    }
-    delete players[id];
+let lastPingTime = 0;
+function updatePing(){
+    lastPingTime = Date.now();
+    socket.emit("ping");
+}
+setInterval(updatePing,2000);
+
+socket.on("pong", ()=>{
+    const ping = Date.now()-lastPingTime;
+    document.getElementById("pingDisplay").innerText = "📶 Ping: "+ping+"ms";
 });
 </script>
 </body>
