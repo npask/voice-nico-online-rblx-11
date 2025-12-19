@@ -45,23 +45,29 @@ io.on("connection", (socket) => {
     socket.position = data.position; // {x, y, z}
   });
 
-  // Client sendet Audio Chunk
-  socket.on("voice", (data) => {
-    // Broadcast an alle anderen mit Lautstärke basierend auf Distance
-    for (let [id, s] of io.sockets.sockets) {
-      if (id === socket.id) continue;
-      if (!s.position) continue;
+socket.on("voice", (data) => {
+  const senderPos = socket.position || {x:0, z:0};
+  for (let [id, s] of io.sockets.sockets) {
+    if (id === socket.id) continue;
+    if (!s.position) continue;
 
-      const dx = s.position.x - socket.position.x;
-      const dz = s.position.z - socket.position.z;
-      const dist = Math.sqrt(dx*dx + dz*dz);
+    const dx = s.position.x - senderPos.x;
+    const dz = s.position.z - senderPos.z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
 
-      let volume = 1 - (dist / 50); // 50 = Max Distanz, danach stumm
-      if (volume <= 0) volume = 0;
+    if(dist > 50) continue; // nicht hören, außerhalb Radius
 
-      s.emit("voice", { audio: data.audio, volume });
-    }
-  });
+    let volume = 1 - (dist / 50);
+    if(volume < 0) volume = 0;
+
+    s.emit("voice", {
+      audio: data.audio,
+      fromX: senderPos.x,
+      fromZ: senderPos.z,
+      volume
+    });
+  }
+});
 
   socket.on("disconnect", () => {
     console.log(`❌ User disconnected: ${socket.id}`);
