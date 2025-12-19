@@ -33,10 +33,10 @@ io.on("connection", socket => {
   });
 
   
-  socket.on("signal", data => {
-    // Daten weiterleiten an den angegebenen Peer
+socket.on("signal", data => {
     io.to(data.to).emit("signal", { from: socket.id, signal: data.signal });
-  });
+});
+
 
   socket.on("disconnect", () => {
     console.log("❌ User left:", socket.id);
