@@ -9,17 +9,20 @@ const io = new Server(server);
 
 const players = {}; // socket.id -> { name, position }
 
+// Middleware um JSON Body zu parsen
+app.use(express.json());
 app.use(express.static("public"));
 
+// ------------------- Socket.IO -------------------
 io.on("connection", socket => {
   console.log("🔗 User connected:", socket.id);
 
   socket.on("join", name => {
     players[socket.id] = { name, position: { x:0,y:0,z:0 } };
     console.log("➕ User joined:", socket.id);
-    // Sag allen anderen, dass ein neuer User da ist
+
     socket.broadcast.emit("user-joined", socket.id);
-    // Sag dem neuen User, wer schon da ist
+
     Object.keys(players).forEach(id => {
       if(id !== socket.id) socket.emit("user-joined", id);
     });
@@ -34,6 +37,22 @@ io.on("connection", socket => {
     delete players[socket.id];
     socket.broadcast.emit("user-left", socket.id);
   });
+});
+
+// ------------------- HTTP Endpoint für Roblox -------------------
+// Roblox Server sendet Spielerpositionen per POST
+app.post("/pos", (req, res) => {
+  const { id, position } = req.body; // erwartet { id: "playerId", position: {x,y,z} }
+  if(!id || !position) return res.status(400).send("Missing id or position");
+
+  // Update oder erstelle Spieler
+  if(!players[id]) players[id] = { name: "RobloxPlayer", position };
+  else players[id].position = position;
+
+  // Optional: Socket.IO Broadcast, falls Clients das live sehen sollen
+  io.emit("players", players);
+
+  res.send("Position updated ✅");
 });
 
 // optional: alle 100ms alle Positionen an alle senden
