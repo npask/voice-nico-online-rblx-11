@@ -1,47 +1,38 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Proximity Voice Debug</title>
-
 <style>
 body {
-  margin: 0;
-  height: 100vh;
+  margin: 0; height: 100vh;
   background: radial-gradient(circle at top, #0f172a, #020617);
-  font-family: system-ui, sans-serif;
-  color: #e5e7eb;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-family: system-ui, sans-serif; color: #e5e7eb;
+  display: flex; align-items: center; justify-content: center;
 }
 .card {
-  background: rgba(15, 23, 42, 0.85);
-  border-radius: 16px;
-  padding: 28px;
-  width: 360px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  background: rgba(15,23,42,0.85);
+  border-radius:16px; padding:28px; width:360px;
+  box-shadow:0 20px 60px rgba(0,0,0,0.6);
 }
-h1 { margin: 0 0 6px; font-size: 22px; }
-p { margin: 0 0 16px; font-size: 14px; color: #94a3b8; }
-input { width: 100%; padding: 10px; border-radius: 10px; border: none; margin-bottom: 12px; }
-button { width: 100%; padding: 10px; border-radius: 10px; border: none; cursor: pointer; font-size: 14px; background: #38bdf8; color: #020617; font-weight: 600; }
-button:hover { background: #0ea5e9; }
-.hint { margin-top: 14px; font-size: 12px; color: #94a3b8; line-height: 1.4; }
-.status { margin-top: 12px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
-.dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; }
-.dot.active { background: #22c55e; }
-.mute { margin-top: 10px; background: #1e293b; color: #e5e7eb; }
-.debug { margin-top: 12px; font-size: 11px; color: #94a3b8; max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 6px; border-radius: 8px; }
+h1 {margin:0 0 6px; font-size:22px;}
+p {margin:0 0 16px; font-size:14px; color:#94a3b8;}
+input {width:100%; padding:10px; border-radius:10px; border:none; margin-bottom:12px;}
+button {width:100%; padding:10px; border-radius:10px; border:none; cursor:pointer; font-size:14px; background:#38bdf8; color:#020617; font-weight:600;}
+button:hover {background:#0ea5e9;}
+.hint {margin-top:14px; font-size:12px; color:#94a3b8; line-height:1.4;}
+.status {margin-top:12px; font-size:13px; display:flex; align-items:center; gap:6px;}
+.dot {width:10px; height:10px; border-radius:50%; background:#ef4444;}
+.dot.active {background:#22c55e;}
+.mute {margin-top:10px; background:#1e293b; color:#e5e7eb;}
+.debug {margin-top:12px; font-size:11px; color:#94a3b8; max-height:120px; overflow-y:auto; background: rgba(0,0,0,0.2); padding:6px; border-radius:8px;}
 </style>
 </head>
 <body>
-
 <div class="card">
   <h1>🎧 Proximity Voice Debug</h1>
   <p>Private Runde · Freunde only</p>
-
   <input id="name" placeholder="Dein Name" />
   <button onclick="joinVoice()">Voice beitreten</button>
 
@@ -49,14 +40,12 @@ button:hover { background: #0ea5e9; }
     <div id="micDot" class="dot"></div>
     <span id="micText">Mikrofon aus</span>
   </div>
-
   <button id="muteBtn" class="mute" onclick="toggleMute()" disabled>🔇 Mute</button>
 
   <div class="hint">
     Mit dem Beitreten aktivierst du Sprachübertragung zu anderen Spielern.<br>
     Es wird nichts gespeichert oder aufgezeichnet.
   </div>
-
   <div id="debug" class="debug"></div>
 </div>
 
@@ -64,57 +53,52 @@ button:hover { background: #0ea5e9; }
 <script>
 const socket = io();
 const audioCtx = new AudioContext();
-const peers = {};
-let localStream;
-let muted = false;
+let localStream = null;
+const peers = {}; // id -> { pc, gain, panner }
 
 const debugEl = document.getElementById("debug");
+function logDebug(msg){ console.log(msg); debugEl.innerText = msg+"\n"+debugEl.innerText; }
 
-function logDebug(msg) {
-  console.log(msg);
-  debugEl.innerText = msg + "\n" + debugEl.innerText;
-}
-
-async function joinVoice() {
+// --------------------
+// Join Voice
+// --------------------
+async function joinVoice(){
   const name = document.getElementById("name").value.trim();
-  if (!name) return alert("Name fehlt 😅");
+  if(!name) return alert("Name fehlt 😅");
+
+  localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  await audioCtx.resume();
+  logDebug("✅ AudioContext resumed, mic active");
 
   socket.emit("join", name);
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-  await audioCtx.resume();
-  logDebug("✅ AudioContext resumed");
 
   document.getElementById("micDot").classList.add("active");
   document.getElementById("micText").innerText = "Mikrofon aktiv";
   document.getElementById("muteBtn").disabled = false;
-
-  logDebug("🎤 Lokales Mikrofon aktiv");
-
-  // erst jetzt WebRTC Peers vorbereiten
-  for (let id in peers) {
-    if (id !== socket.id) createPeer(id, true);
-  }
 }
 
-function toggleMute() {
-  if (!localStream) return;
-
+// --------------------
+// Mute toggle
+// --------------------
+let muted = false;
+function toggleMute(){
+  if(!localStream) return;
   muted = !muted;
   localStream.getAudioTracks()[0].enabled = !muted;
-  document.getElementById("muteBtn").innerText = muted ? "🎤 Unmute" : "🔇 Mute";
-  document.getElementById("micText").innerText = muted ? "Mikrofon stumm" : "Mikrofon aktiv";
-  logDebug("🔇 Mute toggled: " + muted);
+  document.getElementById("muteBtn").innerText = muted?"🎤 Unmute":"🔇 Mute";
+  document.getElementById("micText").innerText = muted?"Mikrofon stumm":"Mikrofon aktiv";
+  logDebug("🔇 Mute toggled: "+muted);
 }
 
-// =======================
-// WebRTC Peer Setup
-// =======================
-function createPeer(id, initiator) {
-  if (peers[id]) return;
+// --------------------
+// Create Peer
+// --------------------
+function createPeer(id, initiator){
+  if(!localStream){ logDebug("⚠️ localStream noch nicht bereit für " + id); return; }
+  if(peers[id]) return;
 
   const pc = new RTCPeerConnection();
-  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  localStream.getTracks().forEach(track=>pc.addTrack(track, localStream));
 
   const gain = audioCtx.createGain();
   const panner = audioCtx.createPanner();
@@ -123,77 +107,76 @@ function createPeer(id, initiator) {
   panner.maxDistance = 70;
   gain.connect(panner).connect(audioCtx.destination);
 
-  pc.ontrack = e => {
-    logDebug("🎧 Track received from " + id);
+  pc.ontrack = e=>{
+    logDebug("🎧 Track received from "+id);
     const src = audioCtx.createMediaStreamSource(e.streams[0]);
     src.connect(gain);
   };
 
-  pc.onicecandidate = e => {
-    if (e.candidate) {
-      socket.emit("signal", { to: id, signal: { ice: e.candidate } });
-    }
+  pc.onicecandidate = e=>{
+    if(e.candidate) socket.emit("signal",{to:id, signal:{ice:e.candidate}});
   };
 
-  if (initiator) {
-    pc.createOffer().then(o => {
+  if(initiator){
+    pc.createOffer().then(o=>{
       pc.setLocalDescription(o);
-      socket.emit("signal", { to: id, signal: { sdp: o } });
+      socket.emit("signal",{to:id, signal:{sdp:o}});
     });
   }
 
-  peers[id] = { pc, gain, panner };
-  logDebug("🟢 Peer created for " + id + " (initiator=" + initiator + ")");
+  peers[id]={pc,gain,panner};
+  logDebug("🟢 Peer created for "+id+" (initiator="+initiator+")");
 }
 
-// =======================
+// --------------------
 // Signaling
-// =======================
-socket.on("user-joined", id => {
-  logDebug("➕ User joined: " + id);
-  createPeer(id, true);
+// --------------------
+socket.on("user-joined", id=>{
+  logDebug("➕ User joined: "+id);
+  createPeer(id,true);
 });
 
-socket.on("signal", async data => {
-  if (!peers[data.from]) createPeer(data.from, false);
+socket.on("signal", async data=>{
+  if(!peers[data.from]) createPeer(data.from,false);
   const peer = peers[data.from];
-
-  if (data.signal.sdp) {
+  if(data.signal.sdp){
     await peer.pc.setRemoteDescription(data.signal.sdp);
-    if (data.signal.sdp.type === "offer") {
+    if(data.signal.sdp.type==="offer"){
       const ans = await peer.pc.createAnswer();
       await peer.pc.setLocalDescription(ans);
-      socket.emit("signal", { to: data.from, signal: { sdp: ans } });
+      socket.emit("signal",{to:data.from, signal:{sdp:ans}});
     }
   }
-  if (data.signal.ice) {
-    await peer.pc.addIceCandidate(data.signal.ice);
-  }
-  logDebug("🔔 Signal processed from " + data.from);
+  if(data.signal.ice) await peer.pc.addIceCandidate(data.signal.ice);
+  logDebug("🔔 Signal processed from "+data.from);
 });
 
-// =======================
-// Distance + 3D Audio Debug
-// =======================
-socket.on("players", players => {
-  const myPos = players[socket.id]?.position || { x:0,y:0,z:0 };
+// --------------------
+// User disconnect
+// --------------------
+socket.on("user-left", id=>{
+  logDebug("❌ User left: "+id);
+  if(peers[id]){
+    peers[id].pc.close();
+    delete peers[id];
+  }
+});
 
-  for (const id in peers) {
-    if (!players[id]) continue;
-
+// --------------------
+// Distance + 3D Audio
+// --------------------
+socket.on("players", players=>{
+  const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
+  for(const id in peers){
+    if(!players[id]) continue;
     const p = players[id].position;
-    const dx = p.x - myPos.x;
-    const dy = p.y - myPos.y;
-    const dz = p.z - myPos.z;
-    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-    const vol = dist > 70 ? 0 : dist < 20 ? 1 : 1 - (dist - 20) / 50;
-    peers[id].gain.gain.value = vol;
-
-    peers[id].panner.positionX.value = dx;
-    peers[id].panner.positionY.value = dy;
-    peers[id].panner.positionZ.value = dz;
-
+    const dx=p.x-myPos.x, dy=p.y-myPos.y, dz=p.z-myPos.z;
+    const dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    const vol=dist>70?0:dist<20?1:1-(dist-20)/50;
+    peers[id].gain.gain.value=vol;
+    peers[id].panner.positionX.value=dx;
+    peers[id].panner.positionY.value=dy;
+    peers[id].panner.positionZ.value=dz;
     logDebug(`👂 ${id} dist=${dist.toFixed(1)} vol=${vol.toFixed(2)}`);
   }
 });
