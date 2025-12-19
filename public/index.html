@@ -51,24 +51,27 @@ let localStream = null;
 const peers = {}; // id -> { pc, gain }
 
 const debugEl = document.getElementById("debug");
-function logDebug(msg){ console.log(msg); debugEl.innerText = msg+"\n"+debugEl.innerText; }
+function logDebug(msg){
+    console.log(msg);
+    debugEl.innerText = msg+"\n"+debugEl.innerText;
+}
 
 // --------------------
 // Join Voice
 // --------------------
 async function joinVoice(){
-  const name = document.getElementById("name").value.trim();
-  if(!name) return alert("Name fehlt 😅");
+    const name = document.getElementById("name").value.trim();
+    if(!name) return alert("Name fehlt 😅");
 
-  localStream = await navigator.mediaDevices.getUserMedia({audio:true});
-  await audioCtx.resume();
-  logDebug("✅ AudioContext resumed, mic active");
+    localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    await audioCtx.resume();
+    logDebug("✅ AudioContext resumed, mic active");
 
-  socket.emit("join", name);
+    socket.emit("join", name);
 
-  document.getElementById("micDot").classList.add("active");
-  document.getElementById("micText").innerText = "Mikrofon aktiv";
-  document.getElementById("muteBtn").disabled = false;
+    document.getElementById("micDot").classList.add("active");
+    document.getElementById("micText").innerText = "Mikrofon aktiv";
+    document.getElementById("muteBtn").disabled = false;
 }
 
 // --------------------
@@ -76,97 +79,95 @@ async function joinVoice(){
 // --------------------
 let muted = false;
 function toggleMute(){
-  if(!localStream) return;
-  muted = !muted;
-  localStream.getAudioTracks()[0].enabled = !muted;
-  document.getElementById("muteBtn").innerText = muted?"🎤 Unmute":"🔇 Mute";
-  document.getElementById("micText").innerText = muted?"Mikrofon stumm":"Mikrofon aktiv";
-  logDebug("🔇 Mute toggled: "+muted);
+    if(!localStream) return;
+    muted = !muted;
+    localStream.getAudioTracks()[0].enabled = !muted;
+    document.getElementById("muteBtn").innerText = muted?"🎤 Unmute":"🔇 Mute";
+    document.getElementById("micText").innerText = muted?"Mikrofon stumm":"Mikrofon aktiv";
+    logDebug("🔇 Mute toggled: "+muted);
 }
 
 // --------------------
 // Create Peer
 // --------------------
 function createPeer(id, initiator){
-  if(!localStream){ logDebug("⚠️ localStream noch nicht bereit für " + id); return; }
-  if(peers[id]) return;
+    if(!localStream){ logDebug("⚠️ localStream noch nicht bereit für " + id); return; }
+    if(peers[id]) return;
 
-  const pc = new RTCPeerConnection();
-  localStream.getTracks().forEach(track=>pc.addTrack(track, localStream));
+    const pc = new RTCPeerConnection();
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  const gain = audioCtx.createGain();
-  gain.gain.value = 1;
-  gain.connect(audioCtx.destination);
+    const gain = audioCtx.createGain();
+    gain.gain.value = 1;
+    gain.connect(audioCtx.destination);
 
-  pc.ontrack = e=>{
-    const src = audioCtx.createMediaStreamSource(e.streams[0]);
-    src.connect(gain);
-    logDebug("🎧 Track received from "+id);
-  };
+    pc.ontrack = e => {
+        const src = audioCtx.createMediaStreamSource(e.streams[0]);
+        src.connect(gain);
+        logDebug("🎧 Track received from "+id);
+    };
 
-  pc.onicecandidate = e=>{
-    if(e.candidate) socket.emit("signal",{to:id, signal:{ice:e.candidate}});
-  };
+    pc.onicecandidate = e => {
+        if(e.candidate) socket.emit("signal",{to:id, signal:{ice:e.candidate}});
+    };
 
-  if(initiator){
-    pc.createOffer().then(o=>{
-      pc.setLocalDescription(o);
-      socket.emit("signal",{to:id, signal:{sdp:o}});
-    });
-  }
+    if(initiator){
+        pc.createOffer().then(o=>{
+            pc.setLocalDescription(o);
+            socket.emit("signal",{to:id, signal:{sdp:o}});
+        });
+    }
 
-  peers[id]={pc,gain};
-  logDebug("🟢 Peer created for "+id+" (initiator="+initiator+")");
+    peers[id] = {pc, gain};
 }
 
 // --------------------
 // Signaling
 // --------------------
 socket.on("user-joined", id=>{
-  logDebug("➕ User joined: "+id);
-  createPeer(id,false);
+    logDebug("➕ User joined: "+id);
+    createPeer(id,true); // existierender Peer initiiert
 });
 
 socket.on("signal", async data=>{
-  if(!peers[data.from]) createPeer(data.from,false);
-  const peer = peers[data.from];
-  if(data.signal.sdp){
-    await peer.pc.setRemoteDescription(data.signal.sdp);
-    if(data.signal.sdp.type==="offer"){
-      const ans = await peer.pc.createAnswer();
-      await peer.pc.setLocalDescription(ans);
-      socket.emit("signal",{to:data.from, signal:{sdp:ans}});
+    if(!peers[data.from]) createPeer(data.from,false);
+    const peer = peers[data.from];
+    if(data.signal.sdp){
+        await peer.pc.setRemoteDescription(data.signal.sdp);
+        if(data.signal.sdp.type==="offer"){
+            const ans = await peer.pc.createAnswer();
+            await peer.pc.setLocalDescription(ans);
+            socket.emit("signal",{to:data.from, signal:{sdp:ans}});
+        }
     }
-  }
-  if(data.signal.ice) await peer.pc.addIceCandidate(data.signal.ice);
-  logDebug("🔔 Signal processed from "+data.from);
+    if(data.signal.ice) await peer.pc.addIceCandidate(data.signal.ice);
 });
 
 // --------------------
 // User disconnect
 // --------------------
 socket.on("user-left", id=>{
-  logDebug("❌ User left: "+id);
-  if(peers[id]){
-    peers[id].pc.close();
-    delete peers[id];
-  }
+    if(peers[id]){
+        peers[id].pc.close();
+        delete peers[id];
+        logDebug("❌ User left: "+id);
+    }
 });
 
 // --------------------
 // 2D Distance Audio
 // --------------------
 socket.on("players", players=>{
-  const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
-  for(const id in peers){
-    if(!players[id]) continue;
-    const p = players[id].position;
-    const dx=p.x-myPos.x, dz=p.z-myPos.z;
-    const dist=Math.sqrt(dx*dx+dz*dz);
-    const vol=dist>70?0:dist<20?1:1-(dist-20)/50;
-    peers[id].gain.gain.value=vol;
-    logDebug(`👂 ${id} dist=${dist.toFixed(1)} vol=${vol.toFixed(2)}`);
-  }
+    const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
+    for(const id in peers){
+        if(!players[id]) continue;
+        const p = players[id].position;
+        const dx = p.x - myPos.x;
+        const dz = p.z - myPos.z;
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        const vol = dist>70?0:dist<20?1:1-(dist-20)/50;
+        peers[id].gain.gain.value = vol;
+    }
 });
 </script>
 </body>
