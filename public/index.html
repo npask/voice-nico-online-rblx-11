@@ -113,51 +113,44 @@ function createPeer(id, initiator, name){
         if(e.candidate) socket.emit("signal",{to:id, signal:{ice:e.candidate}});
     };
 
+    peers[id] = { pc, gain, name };
+
+    // WICHTIG: Initiator nur der „first joiner“ oder nach Regel
     if(initiator){
         pc.createOffer().then(o=>{
             pc.setLocalDescription(o);
             socket.emit("signal",{to:id, signal:{sdp:o}});
         });
     }
-
-    peers[id] = { pc, gain, name };
-    pendingCandidates[id] = [];
 }
+
 
 // --------------------
 // Signaling
 // --------------------
 socket.on("signal", async data => {
-    if(!peers[data.from]) {
+    if(!peers[data.from]){
         const name = players[data.from]?.name || "unbekannt";
-        createPeer(data.from,false,name);
+        createPeer(data.from,false,name); // immer Responder
     }
     const peer = peers[data.from];
-    if(!pendingCandidates[data.from]) pendingCandidates[data.from] = [];
-
+    
     try {
         if(data.signal.sdp){
             const desc = new RTCSessionDescription(data.signal.sdp);
 
             if(desc.type === "offer"){
+                // Responder: setzt RemoteDescription, erstellt Answer
                 if(peer.pc.signalingState === "stable"){
                     await peer.pc.setRemoteDescription(desc);
                     const ans = await peer.pc.createAnswer();
                     await peer.pc.setLocalDescription(ans);
                     socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
-                    pendingCandidates[data.from].forEach(c=>peer.pc.addIceCandidate(c));
-                    pendingCandidates[data.from] = [];
-                } else {
-                    logDebug("⏳ Offer gepuffert, signalingState="+peer.pc.signalingState);
-                    setTimeout(()=> socket.emit("signal", data), 100);
                 }
             } else if(desc.type === "answer"){
+                // Initiator: setzt remoteDescription nur bei have-local-offer
                 if(peer.pc.signalingState === "have-local-offer"){
                     await peer.pc.setRemoteDescription(desc);
-                    pendingCandidates[data.from].forEach(c=>peer.pc.addIceCandidate(c));
-                    pendingCandidates[data.from] = [];
-                } else {
-                    logDebug("⚠️ Answer ignoriert, signalingState="+peer.pc.signalingState);
                 }
             }
         }
@@ -167,13 +160,22 @@ socket.on("signal", async data => {
             if(peer.pc.remoteDescription){
                 await peer.pc.addIceCandidate(ice);
             } else {
-                pendingCandidates[data.from].push(ice);
+                if(!peer.pendingCandidates) peer.pendingCandidates = [];
+                peer.pendingCandidates.push(ice);
             }
         }
+
+        // nach remoteDescription alle gepufferten ICE Candidates hinzufügen
+        if(peer.pc.remoteDescription && peer.pendingCandidates){
+            peer.pendingCandidates.forEach(c=>peer.pc.addIceCandidate(c));
+            peer.pendingCandidates = [];
+        }
+
     } catch(e){
         console.error("Fehler im Signal:", e);
     }
 });
+
 
 // --------------------
 // Player Updates
