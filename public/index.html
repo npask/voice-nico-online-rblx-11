@@ -4,170 +4,56 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>2D Proximity Voice</title>
+<link rel="stylesheet" href="main.css">
 <style>
-  body {
-    margin: 0;
-    background: radial-gradient(circle at top, #0f172a, #020617);
-    font-family: 'Segoe UI', sans-serif;
-    color: #e5e7eb;
-    overflow: hidden;
-  }
-  canvas { display: block; background: #0f172a; }
-  #info {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    font-size: 16px;
-    background: rgba(0,0,0,0.4);
-    padding: 8px 12px;
-    border-radius: 8px;
-  }
-  #selectPlayer {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: #111827;
-    padding: 20px;
-    border-radius: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    color: #fff;
-  }
-  #startBtn {
-    margin-top: 10px;
-    padding: 8px;
-    border: none;
-    border-radius: 6px;
-    background: #0ff;
-    color: #000;
-    cursor: pointer;
-    font-weight: bold;
-  }
+body {
+  margin:0; overflow:hidden;
+  font-family:'Segoe UI',sans-serif;
+  background: radial-gradient(circle at top,#0f172a,#020617);
+  color:#fff;
+}
+canvas { display:block; background:#0f172a; }
+
+#info {
+  position:absolute; top:10px; left:10px;
+  background:rgba(0,0,0,0.4); padding:8px 12px; border-radius:8px;
+}
+
+#controls {
+  position:absolute; bottom:10px; left:10px;
+  background:rgba(0,0,0,0.6); padding:10px;
+  border-radius:10px; display:flex; gap:10px; font-size:14px;
+}
+
+#legal {
+  position:absolute; bottom:10px; right:10px;
+  font-size:10px; color:#aaa; background:rgba(0,0,0,0.4); padding:4px 8px;
+  border-radius:6px;
+}
 </style>
 </head>
 <body>
 
-<div id="info">🎧 Proximity Voice Chat</div>
-<canvas id="gameCanvas"></canvas>
+<div id="info">🎧 Wähle zuerst deinen Spieler</div>
 
 <div id="selectPlayer">
-  <label for="playerId">Wähle deinen Spieler (Roblox UserId):</label>
-  <input type="number" id="playerId" placeholder="123456" />
-  <input type="text" id="playerName" placeholder="Name" />
+  <input type="number" id="playerId" placeholder="Roblox UserId">
+  <input type="text" id="playerName" placeholder="Name">
   <button id="startBtn">Start Proximity Voice</button>
 </div>
 
+<canvas id="gameCanvas"></canvas>
+
+<div id="controls">
+  <button id="toggleMic">🎤 Mikrofon</button>
+  <button id="toggleInfo">ℹ️ Info</button>
+</div>
+
+<div id="legal">
+  © 2025 – Nur zu Demo-Zwecken, keine Daten werden weitergegeben
+</div>
+
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script>
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-window.addEventListener("resize", () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-});
-
-// Socket.IO
-const socket = io();
-
-let players = {}; // id -> {x, z, name, socketId}
-let localPlayer = null;
-const HEARING_RADIUS = 50;
-
-const selectDiv = document.getElementById("selectPlayer");
-const startBtn = document.getElementById("startBtn");
-
-startBtn.addEventListener("click", () => {
-  const idInput = document.getElementById("playerId").value;
-  const nameInput = document.getElementById("playerName").value || "Ich";
-
-  if(!idInput) return alert("Bitte Spieler ID eingeben!");
-
-  localPlayer = {
-    userId: idInput,
-    name: nameInput,
-    x: 0,
-    z: 0
-  };
-
-  // Anmeldung beim Server
-  socket.emit("register", { userId: localPlayer.userId, name: localPlayer.name, position: {x:0, z:0} });
-
-  selectDiv.style.display = "none"; // Auswahl ausblenden
-
-  startProximity();
-});
-
-function startProximity() {
-  // Dummy Bewegung (hier später Roblox Position)
-  setInterval(() => {
-    localPlayer.x += Math.random()*4 - 2;
-    localPlayer.z += Math.random()*4 - 2;
-    socket.emit("updatePosition", { position: {x: localPlayer.x, y:0, z:localPlayer.z} });
-  }, 100);
-
-  // Canvas Draw Loop
-  function draw() {
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    // Eigener Spieler
-    ctx.fillStyle = "#0ff";
-    ctx.beginPath();
-    ctx.arc(canvas.width/2, canvas.height/2, 15, 0, Math.PI*2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText(localPlayer.name, canvas.width/2-10, canvas.height/2-20);
-
-    // Andere Spieler
-    for (let id in players) {
-      if(id === localPlayer.userId) continue;
-      const p = players[id];
-      const dx = p.x - localPlayer.x;
-      const dz = p.z - localPlayer.z;
-      const dist = Math.sqrt(dx*dx + dz*dz);
-      if(dist > HEARING_RADIUS) continue;
-
-      const screenX = canvas.width/2 + dx*5;
-      const screenY = canvas.height/2 + dz*5;
-
-      ctx.beginPath();
-      ctx.arc(screenX, screenY, 12, 0, Math.PI*2);
-      ctx.fillStyle = "#f00";
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.fillText(p.name, screenX-10, screenY-15);
-    }
-
-    requestAnimationFrame(draw);
-  }
-  draw();
-}
-
-// Incoming Voice nur innerhalb Radius
-socket.on("voice", ({audio, fromX, fromZ}) => {
-  if(!localPlayer) return;
-  const dx = fromX - localPlayer.x;
-  const dz = fromZ - localPlayer.z;
-  const dist = Math.sqrt(dx*dx + dz*dz);
-
-  if(dist > HEARING_RADIUS) return;
-
-  let volume = 1 - (dist / HEARING_RADIUS);
-  if(volume < 0) volume = 0;
-
-  const a = new Audio("data:audio/webm;base64," + audio);
-  a.volume = volume;
-  a.play();
-});
-
-// Spieler Positionen vom Server
-socket.on("updatePlayers", (data) => {
-  players = data;
-});
-</script>
-
+<script src="main.js"></script>
 </body>
 </html>
