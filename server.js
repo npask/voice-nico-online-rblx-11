@@ -54,7 +54,7 @@ io.on("connection", (socket) => {
       players[userId].socketId = socket.id; // SocketId setzen
       socket.userId = userId;
       socket.emit("init", { player: players[userId], allPlayers: players });
-    }
+    } else {console.log("notfound")}
   });
 
   // Position-Updates via Socket.IO
