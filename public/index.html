@@ -1,118 +1,157 @@
 <!DOCTYPE html>
-<html>
+<html lang="de">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Proximity Voice</title>
+
+<style>
+  body {
+    margin: 0;
+    height: 100vh;
+    background: radial-gradient(circle at top, #0f172a, #020617);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #e5e7eb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .card {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 16px;
+    padding: 28px;
+    width: 340px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+
+  h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+  }
+
+  p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    color: #94a3b8;
+  }
+
+  input {
+    width: 100%;
+    padding: 10px;
+    border-radius: 10px;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  button {
+    width: 100%;
+    padding: 10px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    background: #38bdf8;
+    color: #020617;
+    font-weight: 600;
+  }
+
+  button:hover {
+    background: #0ea5e9;
+  }
+
+  .hint {
+    margin-top: 14px;
+    font-size: 12px;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+
+  .status {
+    margin-top: 12px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ef4444;
+  }
+
+  .dot.active {
+    background: #22c55e;
+  }
+
+  .mute {
+    margin-top: 10px;
+    background: #1e293b;
+    color: #e5e7eb;
+  }
+</style>
 </head>
+
 <body>
-<input id="name" placeholder="Name">
-<button onclick="join()">Join</button>
+<div class="card">
+  <h1>🎧 Proximity Voice</h1>
+  <p>Private Runde · Freunde only</p>
+
+  <input id="name" placeholder="Dein Name" />
+
+  <button onclick="joinVoice()">Voice beitreten</button>
+
+  <div class="status">
+    <div id="micDot" class="dot"></div>
+    <span id="micText">Mikrofon aus</span>
+  </div>
+
+  <button id="muteBtn" class="mute" onclick="toggleMute()" disabled>
+    🔇 Mute
+  </button>
+
+  <div class="hint">
+    Mit dem Beitreten aktivierst du Sprachübertragung zu anderen Spielern.<br>
+    Es wird nichts gespeichert oder aufgezeichnet.
+  </div>
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const socket = io();
-const audioCtx = new AudioContext();
-const peers = {};
-let localStream;
+  const socket = io();
+  let localStream;
+  let muted = false;
 
-async function join() {
-  const name = document.getElementById("name").value;
-  socket.emit("join", name);
+  async function joinVoice() {
+    const name = document.getElementById("name").value.trim();
+    if (!name) return alert("Name fehlt 😅");
 
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    socket.emit("join", name);
 
-  for (let track of localStream.getTracks()) {
-    console.log("🎤 Mic ready");
-  }
-}
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-/* ======================
-   WebRTC Peer Setup
-   ====================== */
-function createPeer(id, initiator) {
-  const pc = new RTCPeerConnection();
-
-  localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-
-  const gain = audioCtx.createGain();
-  const panner = audioCtx.createPanner();
-  panner.panningModel = "HRTF";
-  panner.maxDistance = 70;
-
-  gain.connect(panner).connect(audioCtx.destination);
-
-  pc.ontrack = e => {
-    const src = audioCtx.createMediaStreamSource(e.streams[0]);
-    src.connect(gain);
-  };
-
-  pc.onicecandidate = e => {
-    if (e.candidate) {
-      socket.emit("signal", {
-        to: id,
-        signal: { ice: e.candidate }
-      });
-    }
-  };
-
-  if (initiator) {
-    pc.createOffer().then(o => {
-      pc.setLocalDescription(o);
-      socket.emit("signal", {
-        to: id,
-        signal: { sdp: o }
-      });
-    });
+    document.getElementById("micDot").classList.add("active");
+    document.getElementById("micText").innerText = "Mikrofon aktiv";
+    document.getElementById("muteBtn").disabled = false;
   }
 
-  peers[id] = { pc, gain, panner };
-}
+  function toggleMute() {
+    if (!localStream) return;
 
-socket.on("user-joined", id => createPeer(id, true));
+    muted = !muted;
+    localStream.getAudioTracks()[0].enabled = !muted;
 
-socket.on("signal", async data => {
-  let peer = peers[data.from];
-  if (!peer) createPeer(data.from, false);
+    document.getElementById("muteBtn").innerText =
+      muted ? "🎤 Unmute" : "🔇 Mute";
 
-  peer = peers[data.from];
-
-  if (data.signal.sdp) {
-    await peer.pc.setRemoteDescription(data.signal.sdp);
-    if (data.signal.sdp.type === "offer") {
-      const ans = await peer.pc.createAnswer();
-      await peer.pc.setLocalDescription(ans);
-      socket.emit("signal", {
-        to: data.from,
-        signal: { sdp: ans }
-      });
-    }
+    document.getElementById("micText").innerText =
+      muted ? "Mikrofon stumm" : "Mikrofon aktiv";
   }
-
-  if (data.signal.ice) {
-    await peer.pc.addIceCandidate(data.signal.ice);
-  }
-});
-
-/* ======================
-   Distance + 3D Audio
-   ====================== */
-socket.on("players", players => {
-  for (const id in peers) {
-    if (!players[id]) continue;
-
-    const p = players[id].position;
-    const d = Math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
-
-    peers[id].gain.gain.value =
-      d > 70 ? 0 :
-      d < 20 ? 1 :
-      1 - (d - 20) / 50;
-
-    peers[id].panner.positionX.value = p.x;
-    peers[id].panner.positionY.value = p.y;
-    peers[id].panner.positionZ.value = p.z;
-  }
-});
 </script>
 </body>
 </html>
