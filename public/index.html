@@ -5,48 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Proximity Voice Debug</title>
 <style>
-body {
-  margin: 0; height: 100vh;
-  background: radial-gradient(circle at top, #0f172a, #020617);
-  font-family: system-ui, sans-serif; color: #e5e7eb;
-  display: flex; align-items: center; justify-content: center;
-}
-.card {
-  background: rgba(15,23,42,0.85);
-  border-radius:16px; padding:28px; width:360px;
-  box-shadow:0 20px 60px rgba(0,0,0,0.6);
-}
-h1 {margin:0 0 6px; font-size:22px;}
-p {margin:0 0 16px; font-size:14px; color:#94a3b8;}
-input {width:100%; padding:10px; border-radius:10px; border:none; margin-bottom:12px;}
-button {width:100%; padding:10px; border-radius:10px; border:none; cursor:pointer; font-size:14px; background:#38bdf8; color:#020617; font-weight:600;}
-button:hover {background:#0ea5e9;}
-.hint {margin-top:14px; font-size:12px; color:#94a3b8; line-height:1.4;}
-.status {margin-top:12px; font-size:13px; display:flex; align-items:center; gap:6px;}
-.dot {width:10px; height:10px; border-radius:50%; background:#ef4444;}
-.dot.active {background:#22c55e;}
-.mute {margin-top:10px; background:#1e293b; color:#e5e7eb;}
-.debug {margin-top:12px; font-size:11px; color:#94a3b8; max-height:120px; overflow-y:auto; background: rgba(0,0,0,0.2); padding:6px; border-radius:8px;}
+body {margin:0;height:100vh;background:radial-gradient(circle at top,#0f172a,#020617);
+font-family:system-ui,sans-serif;color:#e5e7eb;display:flex;align-items:center;justify-content:center;}
+.card {background:rgba(15,23,42,0.85);border-radius:16px;padding:28px;width:360px;
+box-shadow:0 20px 60px rgba(0,0,0,0.6);}
+h1{margin:0 0 6px;font-size:22px;}
+p{margin:0 0 16px;font-size:14px;color:#94a3b8;}
+input{width:100%;padding:10px;border-radius:10px;border:none;margin-bottom:12px;}
+button{width:100%;padding:10px;border-radius:10px;border:none;cursor:pointer;font-size:14px;background:#38bdf8;color:#020617;font-weight:600;}
+button:hover{background:#0ea5e9;}
+.hint{margin-top:14px;font-size:12px;color:#94a3b8;line-height:1.4;}
+.status{margin-top:12px;font-size:13px;display:flex;align-items:center;gap:6px;}
+.dot{width:10px;height:10px;border-radius:50%;background:#ef4444;}
+.dot.active{background:#22c55e;}
+.mute{margin-top:10px;background:#1e293b;color:#e5e7eb;}
+.debug{margin-top:12px;font-size:11px;color:#94a3b8;max-height:150px;overflow-y:auto;background: rgba(0,0,0,0.2);padding:6px;border-radius:8px;}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>🎧 Proximity Voice Debug</h1>
-  <p>Private Runde · Freunde only</p>
-  <input id="name" placeholder="Dein Name" />
-  <button onclick="joinVoice()">Voice beitreten</button>
+<h1>🎧 Proximity Voice Debug</h1>
+<p>Private Runde · Freunde only</p>
+<input id="name" placeholder="Dein Name" />
+<button onclick="joinVoice()">Voice beitreten</button>
 
-  <div class="status">
-    <div id="micDot" class="dot"></div>
-    <span id="micText">Mikrofon aus</span>
-  </div>
-  <button id="muteBtn" class="mute" onclick="toggleMute()" disabled>🔇 Mute</button>
+<div class="status">
+<div id="micDot" class="dot"></div>
+<span id="micText">Mikrofon aus</span>
+</div>
+<button id="muteBtn" class="mute" onclick="toggleMute()" disabled>🔇 Mute</button>
 
-  <div class="hint">
-    Mit dem Beitreten aktivierst du Sprachübertragung zu anderen Spielern.<br>
-    Es wird nichts gespeichert oder aufgezeichnet.
-  </div>
-  <div id="debug" class="debug"></div>
+<div class="hint">
+Mit dem Beitreten aktivierst du Sprachübertragung zu anderen Spielern.<br>
+Es wird nichts gespeichert oder aufgezeichnet.
+</div>
+
+<div id="debug" class="debug"></div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -75,6 +69,9 @@ async function joinVoice(){
   document.getElementById("micDot").classList.add("active");
   document.getElementById("micText").innerText = "Mikrofon aktiv";
   document.getElementById("muteBtn").disabled = false;
+
+  // Erst jetzt Peers für schon bestehende Users erstellen
+  socket.emit("request-existing"); // optional je nach Server
 }
 
 // --------------------
@@ -105,12 +102,12 @@ function createPeer(id, initiator){
   panner.panningModel = "HRTF";
   panner.distanceModel = "linear";
   panner.maxDistance = 70;
-  gain.connect(panner).connect(audioCtx.destination);
+  gain.connect(panner).connect(audioCtx.destination); // direkt hören zum Test
 
   pc.ontrack = e=>{
     logDebug("🎧 Track received from "+id);
     const src = audioCtx.createMediaStreamSource(e.streams[0]);
-    src.connect(gain);
+    src.connect(gain); // später kann man auf panner.connect(audioCtx.destination) wechseln
   };
 
   pc.onicecandidate = e=>{
