@@ -38,15 +38,10 @@ io.on("connection", socket => {
     });
   });
 
-  // Position Update
-  socket.on("updatePos", pos => {
-    if(players[socket.id]) players[socket.id].position = pos;
-  });
+  socket.on("voice", data => {
+    socket.broadcast.emit("voice", data, socket.id);
+});
 
-  // RTC Signaling
-  socket.on("signal", data => {
-    if(data.to) io.to(data.to).emit("signal", { from: socket.id, signal: data.signal });
-  });
 
   // Disconnect
   socket.on("disconnect", () => {
