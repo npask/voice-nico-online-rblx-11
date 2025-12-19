@@ -4,41 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>2D Proximity Voice</title>
-<link rel="stylesheet" href="main.css">
 <style>
-body {
-  margin:0; overflow:hidden;
-  font-family:'Segoe UI',sans-serif;
-  background: radial-gradient(circle at top,#0f172a,#020617);
-  color:#fff;
-}
+body { margin:0; font-family:Segoe UI,sans-serif; background:radial-gradient(circle at top,#0f172a,#020617); color:#fff; overflow:hidden; }
 canvas { display:block; background:#0f172a; }
-
-#info {
-  position:absolute; top:10px; left:10px;
-  background:rgba(0,0,0,0.4); padding:8px 12px; border-radius:8px;
+#menu {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:rgba(20,20,30,0.9); padding:20px; border-radius:12px; display:flex; flex-direction:column; gap:10px;
 }
-
 #controls {
-  position:absolute; bottom:10px; left:10px;
-  background:rgba(0,0,0,0.6); padding:10px;
-  border-radius:10px; display:flex; gap:10px; font-size:14px;
+  position:absolute; bottom:10px; left:10px; background:rgba(0,0,0,0.6); padding:10px; border-radius:10px; display:flex; gap:10px; font-size:14px;
 }
-
 #legal {
-  position:absolute; bottom:10px; right:10px;
-  font-size:10px; color:#aaa; background:rgba(0,0,0,0.4); padding:4px 8px;
-  border-radius:6px;
+  position:absolute; bottom:10px; right:10px; font-size:10px; color:#aaa; background:rgba(0,0,0,0.4); padding:4px 8px; border-radius:6px;
 }
 </style>
 </head>
 <body>
 
-<div id="info">🎧 Wähle zuerst deinen Spieler</div>
-
-<div id="selectPlayer">
-  <input type="number" id="playerId" placeholder="Roblox UserId">
-  <input type="text" id="playerName" placeholder="Name">
+<div id="menu">
+  <label for="playerSelect">Wähle deinen Spieler:</label>
+  <select id="playerSelect"></select>
   <button id="startBtn">Start Proximity Voice</button>
 </div>
 
@@ -46,11 +31,10 @@ canvas { display:block; background:#0f172a; }
 
 <div id="controls">
   <button id="toggleMic">🎤 Mikrofon</button>
-  <button id="toggleInfo">ℹ️ Info</button>
 </div>
 
 <div id="legal">
-  © 2025 – Nur zu Demo-Zwecken, keine Daten werden weitergegeben
+  © 2025 – Nur Demo-Zwecke, keine Daten werden weitergegeben
 </div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
