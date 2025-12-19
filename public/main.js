@@ -2,7 +2,7 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
-window.addEventListener("resize",()=>{canvas.width=window.innerWidth;canvas.height=window.innerHeight});
+window.addEventListener("resize",()=>{canvas.width=window.innerWidth; canvas.height=window.innerHeight});
 
 const socket = io();
 const HEARING_RADIUS = 50;
@@ -10,27 +10,46 @@ let players = {};
 let localPlayer = null;
 let micEnabled = false;
 
-// Player auswählen
-document.getElementById("startBtn").addEventListener("click", ()=>{
-  const id=document.getElementById("playerId").value;
-  const name=document.getElementById("playerName").value||"Ich";
-  if(!id)return alert("Bitte Roblox UserId eingeben!");
-  localPlayer={userId:id,name:name,x:0,z:0};
-  socket.emit("identify", id);
-  document.getElementById("selectPlayer").style.display="none";
-  startProximity();
+// Menü-Elemente
+const menu = document.getElementById("menu");
+const playerSelect = document.getElementById("playerSelect");
+const startBtn = document.getElementById("startBtn");
+
+// Socket.IO: updatePlayers
+socket.on("updatePlayers",(data)=>{
+  players=data;
+  updatePlayerMenu();
 });
 
-// Mikrofon aktivieren/deaktivieren
-document.getElementById("toggleMic").addEventListener("click",()=>{
-  micEnabled = !micEnabled;
-  if(micEnabled) startMic();
+// Menü füllen
+function updatePlayerMenu(){
+  const currentIds = Array.from(playerSelect.options).map(o=>o.value);
+  Object.keys(players).forEach(id=>{
+    if(!currentIds.includes(id)){
+      const option = document.createElement("option");
+      option.value=id;
+      option.text=players[id].name+" ("+id+")";
+      playerSelect.add(option);
+    }
+  });
+}
+
+// Spieler auswählen
+startBtn.addEventListener("click",()=>{
+  const userId = playerSelect.value;
+  if(!userId) return alert("Bitte Spieler auswählen!");
+  localPlayer = players[userId];
+  socket.emit("identify", userId);
+  menu.style.display="none";
+  startProximity();
 });
 
 // Canvas Loop
 function startProximity(){
   function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(!localPlayer) return;
+
     // Eigener Spieler
     ctx.fillStyle="#0ff";
     ctx.beginPath();
@@ -56,17 +75,29 @@ function startProximity(){
       ctx.fillStyle="#fff";
       ctx.fillText(p.name,screenX-10,screenY-15);
     }
+
     requestAnimationFrame(draw);
   }
   draw();
 }
 
-// Position Updates senden (z.B. aus Roblox)
-setInterval(()=>{
-  if(!localPlayer) return;
-  // localPlayer.x / z sollten hier echte Werte aus Roblox sein
-  socket.emit("updatePosition",{position:{x:localPlayer.x,z:localPlayer.z}});
-},100);
+// Mikrofon
+document.getElementById("toggleMic").addEventListener("click",()=>{
+  micEnabled=!micEnabled;
+  if(micEnabled) startMic();
+});
+
+function startMic(){
+  navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+    const recorder = new MediaRecorder(stream,{mimeType:"audio/webm;codecs=opus"});
+    recorder.ondataavailable=e=>{
+      const reader=new FileReader();
+      reader.onload=()=>{ const base64=reader.result.split(",")[1]; socket.emit("voice",{audio:base64}); };
+      reader.readAsDataURL(e.data);
+    };
+    recorder.start(200);
+  });
+}
 
 // Voice empfangen
 socket.on("voice",({audio,fromX,fromZ,volume})=>{
@@ -79,19 +110,3 @@ socket.on("voice",({audio,fromX,fromZ,volume})=>{
   a.volume=volume;
   a.play();
 });
-
-// Spielerlisten-Update
-socket.on("updatePlayers",data=>{players=data});
-
-// Mikrofon aufnehmen
-function startMic(){
-  navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
-    const recorder=new MediaRecorder(stream,{mimeType:"audio/webm;codecs=opus"});
-    recorder.ondataavailable=e=>{
-      const reader=new FileReader();
-      reader.onload=()=>{ const base64=reader.result.split(",")[1]; socket.emit("voice",{audio:base64}); };
-      reader.readAsDataURL(e.data);
-    };
-    recorder.start(200);
-  });
-}
