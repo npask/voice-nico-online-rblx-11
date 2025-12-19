@@ -17,15 +17,15 @@ const players = {}; // id -> {name, position}
 io.on("connection", socket=>{
     console.log("🔗 User connected:", socket.id);
 
+// server.js
 socket.on("join", name=>{
-    // Nur existierende Spieler updaten
     if(players[socket.id]){
-        players[socket.id].name = name; // Name aktualisieren
+        players[socket.id].name = name;
+        socket.emit("players", players); // sofort aktuelle Spieler senden
         socket.broadcast.emit("user-joined", socket.id);
-    } else {
-        logDebug("⚠️ Spieler nicht bekannt vom Roblox-Server: "+socket.id);
     }
 });
+
 
 
     socket.on("voice", (data)=>{
