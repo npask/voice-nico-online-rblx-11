@@ -71,7 +71,7 @@ window.addEventListener("resize", () => {
 });
 
 // Socket.IO
-const socket = io("https://dein-server-url");
+const socket = io();
 
 let players = {}; // id -> {x, z, name, socketId}
 let localPlayer = null;
