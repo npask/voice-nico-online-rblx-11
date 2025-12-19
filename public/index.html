@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Proximity Voice</title>
+</head>
+<body>
+<input id="name" placeholder="Name">
+<button onclick="join()">Join</button>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const audioCtx = new AudioContext();
+const peers = {};
+let localStream;
+
+async function join() {
+  const name = document.getElementById("name").value;
+  socket.emit("join", name);
+
+  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  for (let track of localStream.getTracks()) {
+    console.log("🎤 Mic ready");
+  }
+}
+
+/* ======================
+   WebRTC Peer Setup
+   ====================== */
+function createPeer(id, initiator) {
+  const pc = new RTCPeerConnection();
+
+  localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+  const gain = audioCtx.createGain();
+  const panner = audioCtx.createPanner();
+  panner.panningModel = "HRTF";
+  panner.maxDistance = 70;
+
+  gain.connect(panner).connect(audioCtx.destination);
+
+  pc.ontrack = e => {
+    const src = audioCtx.createMediaStreamSource(e.streams[0]);
+    src.connect(gain);
+  };
+
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      socket.emit("signal", {
+        to: id,
+        signal: { ice: e.candidate }
+      });
+    }
+  };
+
+  if (initiator) {
+    pc.createOffer().then(o => {
+      pc.setLocalDescription(o);
+      socket.emit("signal", {
+        to: id,
+        signal: { sdp: o }
+      });
+    });
+  }
+
+  peers[id] = { pc, gain, panner };
+}
+
+socket.on("user-joined", id => createPeer(id, true));
+
+socket.on("signal", async data => {
+  let peer = peers[data.from];
+  if (!peer) createPeer(data.from, false);
+
+  peer = peers[data.from];
+
+  if (data.signal.sdp) {
+    await peer.pc.setRemoteDescription(data.signal.sdp);
+    if (data.signal.sdp.type === "offer") {
+      const ans = await peer.pc.createAnswer();
+      await peer.pc.setLocalDescription(ans);
+      socket.emit("signal", {
+        to: data.from,
+        signal: { sdp: ans }
+      });
+    }
+  }
+
+  if (data.signal.ice) {
+    await peer.pc.addIceCandidate(data.signal.ice);
+  }
+});
+
+/* ======================
+   Distance + 3D Audio
+   ====================== */
+socket.on("players", players => {
+  for (const id in peers) {
+    if (!players[id]) continue;
+
+    const p = players[id].position;
+    const d = Math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+
+    peers[id].gain.gain.value =
+      d > 70 ? 0 :
+      d < 20 ? 1 :
+      1 - (d - 20) / 50;
+
+    peers[id].panner.positionX.value = p.x;
+    peers[id].panner.positionY.value = p.y;
+    peers[id].panner.positionZ.value = p.z;
+  }
+});
+</script>
+</body>
+</html>
