@@ -12,10 +12,7 @@
     color: #e5e7eb;
     overflow: hidden;
   }
-  canvas {
-    display: block;
-    background: #0f172a;
-  }
+  canvas { display: block; background: #0f172a; }
   #info {
     position: absolute;
     top: 10px;
@@ -28,79 +25,65 @@
 </style>
 </head>
 <body>
-<div id="info">🎧 Klicke einen Spieler, um gezielt Voice zu hören</div>
+<div id="info">🎧 Proximity Voice Chat aktiv (Höre Spieler im Radius)</div>
 <canvas id="gameCanvas"></canvas>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
-
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
-
 window.addEventListener("resize", () => {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 });
 
 // Socket.IO
-const socket = io();
+const socket = io("https://dein-server-url");
 
 // Spieler Daten
-let players = {}; // id -> {x, y, name, selected}
-let localPlayer = {x: 0, y: 0, id: "me"};
+let players = {}; // id -> {x, z, name}
+let localPlayer = {x: 0, z: 0, id: "me"};
+const HEARING_RADIUS = 50; // Max Distanz zum Hören
 
-// Maus Klick für gezieltes Hören
-canvas.addEventListener("click", e => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
-  for (let id in players) {
-    const p = players[id];
-    const px = p.x + canvas.width/2;
-    const py = p.y + canvas.height/2;
-    const dist = Math.hypot(mx - px, my - py);
-    if (dist < 20) {
-      p.selected = !p.selected;
-      console.log("🎤 Selected player:", p.name, p.selected);
-    }
-  }
-});
-
-// Dummy Roblox Position Updater (hier würdest du echte Werte nehmen)
+// Dummy Bewegung (später Roblox Position verwenden)
 setInterval(() => {
-  // z.B. random Bewegung
   localPlayer.x += Math.random()*4 - 2;
-  localPlayer.y += Math.random()*4 - 2;
-  socket.emit("updatePosition", {position: {x: localPlayer.x, y: 0, z: localPlayer.y}});
+  localPlayer.z += Math.random()*4 - 2;
+  socket.emit("updatePosition", {position: {x: localPlayer.x, y:0, z:localPlayer.z}});
 }, 100);
 
 // Canvas Draw Loop
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0,0,canvas.width, canvas.height);
 
   // Eigener Spieler
   ctx.fillStyle = "#0ff";
   ctx.beginPath();
   ctx.arc(canvas.width/2, canvas.height/2, 15, 0, Math.PI*2);
   ctx.fill();
+  ctx.fillStyle = "#fff";
   ctx.fillText("Du", canvas.width/2-10, canvas.height/2-20);
 
   // Andere Spieler
   for (let id in players) {
+    if(id === localPlayer.id) continue;
     const p = players[id];
-    const screenX = canvas.width/2 + (p.x - localPlayer.x)*5;
-    const screenY = canvas.height/2 + (p.z - localPlayer.y)*5;
+    const dx = p.x - localPlayer.x;
+    const dz = p.z - localPlayer.z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+
+    if(dist > HEARING_RADIUS) continue; // außerhalb Radius
+
+    const screenX = canvas.width/2 + dx*5;
+    const screenY = canvas.height/2 + dz*5;
 
     ctx.beginPath();
-    ctx.arc(screenX, screenY, p.selected ? 20 : 12, 0, Math.PI*2);
-    ctx.fillStyle = p.selected ? "#ff0" : "#f00";
+    ctx.arc(screenX, screenY, 12, 0, Math.PI*2);
+    ctx.fillStyle = "#f00";
     ctx.fill();
-
     ctx.fillStyle = "#fff";
-    ctx.font = "12px sans-serif";
     ctx.fillText(p.name, screenX - 10, screenY - 15);
   }
 
@@ -108,16 +91,25 @@ function draw() {
 }
 draw();
 
-// Socket.IO: Positionen vom Server bekommen
-socket.on("updatePlayers", (data) => {
-  players = data; // {id: {x,y,z,name}}
-});
+// Incoming Voice nur im Radius abspielen
+socket.on("voice", ({audio, fromX, fromZ}) => {
+  const dx = fromX - localPlayer.x;
+  const dz = fromZ - localPlayer.z;
+  const dist = Math.sqrt(dx*dx + dz*dz);
 
-// Incoming Voice
-socket.on("voice", ({audio, volume}) => {
+  if(dist > HEARING_RADIUS) return; // nicht hören
+
+  let volume = 1 - (dist / HEARING_RADIUS);
+  if(volume < 0) volume = 0;
+
   const a = new Audio("data:audio/webm;base64," + audio);
   a.volume = volume;
   a.play();
+});
+
+// Positionen vom Server bekommen
+socket.on("updatePlayers", (data) => {
+  players = data;
 });
 </script>
 </body>
