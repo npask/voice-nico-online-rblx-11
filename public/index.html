@@ -176,16 +176,20 @@ setInterval(update2DAudio,50);
 
 // ----------------- Spieler Updates -----------------
 socket.on("players", data=>{
-    Object.assign(players,data);
-    const ul=document.getElementById("playersList");
-    ul.innerHTML="";
+    // Sicherstellen, dass data = {id -> {name, position}}
+    for(const id in data){
+        if(!data[id].position) data[id].position = {x:0,z:0};
+    }
+    Object.assign(players, data);
+
+    const ul = document.getElementById("playersList");
+    ul.innerHTML = "";
     for(const id in players){
-        const pos=players[id].position;
-        const li=document.createElement("li");
-        li.textContent=`${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
-        ul.appendChild(li);
+        const pos = players[id].position;
+        ul.innerHTML += `<li>${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}</li>`;
     }
 });
+
 
 // ----------------- Ping -----------------
 let lastPingTime=0;
