@@ -48,8 +48,9 @@ button:hover{background:#0ea5e9;}
 const socket = io();
 const audioCtx = new AudioContext();
 let localStream = null;
-const peers = {}; // id -> { pc, gain }
+const peers = {}; // id -> { pc, gain, name }
 const pendingCandidates = {}; // id -> ICE array
+const players = {}; // id -> {name, position}
 
 const debugEl = document.getElementById("debug");
 function logDebug(msg){
@@ -91,7 +92,7 @@ function toggleMute(){
 // --------------------
 // Create Peer
 // --------------------
-function createPeer(id, initiator){
+function createPeer(id, initiator, name){
     if(!localStream){ logDebug("⚠️ localStream noch nicht bereit für " + id); return; }
     if(peers[id]) return;
 
@@ -105,7 +106,7 @@ function createPeer(id, initiator){
     pc.ontrack = e => {
         const src = audioCtx.createMediaStreamSource(e.streams[0]);
         src.connect(gain);
-        logDebug("🎧 Track received from "+id);
+        logDebug("🎧 Track received from "+name+" ("+id+")");
     };
 
     pc.onicecandidate = e => {
@@ -119,7 +120,7 @@ function createPeer(id, initiator){
         });
     }
 
-    peers[id] = {pc, gain};
+    peers[id] = { pc, gain, name };
     pendingCandidates[id] = [];
 }
 
@@ -127,7 +128,10 @@ function createPeer(id, initiator){
 // Signaling
 // --------------------
 socket.on("signal", async data => {
-    if(!peers[data.from]) createPeer(data.from,false);
+    if(!peers[data.from]) {
+        const name = players[data.from]?.name || "unbekannt";
+        createPeer(data.from,false,name);
+    }
     const peer = peers[data.from];
     if(!pendingCandidates[data.from]) pendingCandidates[data.from] = [];
 
@@ -172,24 +176,13 @@ socket.on("signal", async data => {
 });
 
 // --------------------
-// User disconnect
+// Player Updates
 // --------------------
-socket.on("user-left", id=>{
-    if(peers[id]){
-        peers[id].pc.close();
-        delete peers[id];
-        delete pendingCandidates[id];
-        logDebug("❌ User left: "+id);
-    }
-});
+socket.on("players", data=>{
+    Object.assign(players, data);
 
-// --------------------
-// 2D Distance Audio + Player Positions
-// --------------------
-socket.on("players", players=>{
+    // Distance Audio
     const myPos = players[socket.id]?.position || {x:0,y:0,z:0};
-
-    // 1️⃣ Distance Audio
     for(const id in peers){
         if(!players[id]) continue;
         const p = players[id].position;
@@ -200,14 +193,33 @@ socket.on("players", players=>{
         peers[id].gain.gain.value = vol;
     }
 
-    // 2️⃣ Positionsanzeige
+    // Player Position List
     const ul = document.getElementById("playersList");
     ul.innerHTML = "";
     for(const id in players){
         const pos = players[id].position;
         const li = document.createElement("li");
-        li.textContent = `${id} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
+        li.textContent = `${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}`;
         ul.appendChild(li);
+    }
+});
+
+// --------------------
+// User join/left
+// --------------------
+socket.on("user-joined", id => {
+    if(!peers[id]){
+        const name = players[id]?.name || "unbekannt";
+        createPeer(id,true,name);
+    }
+});
+
+socket.on("user-left", id => {
+    if(peers[id]){
+        peers[id].pc.close();
+        delete peers[id];
+        delete pendingCandidates[id];
+        logDebug("❌ User left: "+id);
     }
 });
 </script>
