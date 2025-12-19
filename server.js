@@ -1,57 +1,42 @@
+// server.js
 const express = require("express");
 const http = require("http");
-const cors = require("cors");
 const { Server } = require("socket.io");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
 const server = http.createServer(app);
 const io = new Server(server);
 
-const players = {}; 
-// playerId -> { name?, position }
-
-app.use(express.static("public"));
-
-app.post("/positions", (req, res) => {
-  const batch = req.body; // { playerId: {x,y,z}, ... }
-
-  for (const id in batch) {
-    if (!players[id]) {
-      players[id] = { position: batch[id] };
-    } else {
-      players[id].position = batch[id];
-    }
-  }
-
-  res.sendStatus(200);
-});
+const players = {}; // socket.id -> { name, position }
 
 io.on("connection", socket => {
-socket.on("join", name => {
-  players[socket.id] = { name, position: { x:0, y:0, z:0 } };
-  
-  // sag allen anderen
-  socket.broadcast.emit("user-joined", socket.id);
+  console.log("🔗 User connected:", socket.id);
 
-  // optional: sag dem Joiner, wer schon da ist
-  const otherIds = Object.keys(players).filter(id => id !== socket.id);
-  otherIds.forEach(id => socket.emit("user-joined", id));
-});
+  socket.on("join", name => {
+    players[socket.id] = { name, position: { x:0,y:0,z:0 } };
+    console.log("➕ User joined:", socket.id);
+    // Sag allen anderen, dass ein neuer User da ist
+    socket.broadcast.emit("user-joined", socket.id);
+    // Sag dem neuen User, wer schon da ist
+    Object.keys(players).forEach(id => {
+      if(id !== socket.id) socket.emit("user-joined", id);
+    });
+  });
 
+  socket.on("updatePos", pos => {
+    if(players[socket.id]) players[socket.id].position = pos;
+  });
 
   socket.on("disconnect", () => {
+    console.log("❌ User left:", socket.id);
     delete players[socket.id];
+    socket.broadcast.emit("user-left", socket.id);
   });
 });
 
-// 🔁 EIN Broadcast pro Sekunde
-setInterval(() => {
+// optional: alle 100ms alle Positionen an alle senden
+setInterval(()=>{
   io.emit("players", players);
-}, 1000);
+},100);
 
-server.listen(3000, () =>
-  console.log("🟢 Server läuft auf http://localhost:3000")
-);
+server.listen(3000, ()=>console.log("Server running on port 3000"));
