@@ -129,46 +129,55 @@ socket.on("user-joined", id=>{
     createPeer(id, true); // existierender Peer initiiert
 });
 
+const pendingCandidates = {}; // id -> [ICE]
+
 socket.on("signal", async data => {
     if(!peers[data.from]) createPeer(data.from,false);
     const peer = peers[data.from];
+    if(!pendingCandidates[data.from]) pendingCandidates[data.from] = [];
 
     try {
         if(data.signal.sdp){
             const desc = new RTCSessionDescription(data.signal.sdp);
 
             if(desc.type === "offer"){
-                // nur wenn remoteDescription noch nicht gesetzt
+                // Wenn schon have-local-offer, wir speichern die Offer temporär und antworten später
                 if(peer.pc.signalingState === "stable"){
                     await peer.pc.setRemoteDescription(desc);
                     const ans = await peer.pc.createAnswer();
                     await peer.pc.setLocalDescription(ans);
                     socket.emit("signal",{to:data.from, signal:{sdp:peer.pc.localDescription}});
+                    // ICE-Candidates anwenden, die vor der RemoteDesc kamen
+                    pendingCandidates[data.from].forEach(c=>peer.pc.addIceCandidate(c));
+                    pendingCandidates[data.from] = [];
                 } else {
-                    console.warn("Offer ignoriert: signalingState=", peer.pc.signalingState);
+                    console.log("Offer gepuffert, signalingState=", peer.pc.signalingState);
+                    setTimeout(()=> socket.emit("signal", data), 100);
                 }
             } else if(desc.type === "answer"){
-                // nur wenn wir vorher eine lokale Offer gemacht haben
                 if(peer.pc.signalingState === "have-local-offer"){
                     await peer.pc.setRemoteDescription(desc);
+                    pendingCandidates[data.from].forEach(c=>peer.pc.addIceCandidate(c));
+                    pendingCandidates[data.from] = [];
                 } else {
-                    console.warn("Answer ignoriert: signalingState=", peer.pc.signalingState);
+                    console.warn("Answer ignoriert, signalingState=", peer.pc.signalingState);
                 }
             }
         }
 
         if(data.signal.ice){
-            try{
-                await peer.pc.addIceCandidate(new RTCIceCandidate(data.signal.ice));
-            } catch(e){
-                console.warn("ICE Candidate ignored:", e);
+            const ice = new RTCIceCandidate(data.signal.ice);
+            if(peer.pc.remoteDescription){
+                await peer.pc.addIceCandidate(ice);
+            } else {
+                // noch nicht ready, in Queue speichern
+                pendingCandidates[data.from].push(ice);
             }
         }
     } catch(e){
         console.error("Fehler im Signal:", e);
     }
 });
-
 
 // --------------------
 // User disconnect
