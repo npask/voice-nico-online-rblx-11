@@ -10,29 +10,27 @@ let players = {};
 let localPlayer = null;
 let micEnabled = false;
 
-// Menü-Elemente
+// Menü
 const menu = document.getElementById("menu");
 const playerSelect = document.getElementById("playerSelect");
 const startBtn = document.getElementById("startBtn");
 
-// Socket.IO: updatePlayers
+// Menü aktualisieren
+function updatePlayerMenu(){
+  playerSelect.innerHTML = "";
+  Object.keys(players).forEach(id=>{
+    const option = document.createElement("option");
+    option.value = id;
+    option.text = players[id].name+" ("+id+")";
+    playerSelect.add(option);
+  });
+}
+
+// Socket UpdatePlayers
 socket.on("updatePlayers",(data)=>{
   players=data;
   updatePlayerMenu();
 });
-
-// Menü füllen
-function updatePlayerMenu(){
-  const currentIds = Array.from(playerSelect.options).map(o=>o.value);
-  Object.keys(players).forEach(id=>{
-    if(!currentIds.includes(id)){
-      const option = document.createElement("option");
-      option.value=id;
-      option.text=players[id].name+" ("+id+")";
-      playerSelect.add(option);
-    }
-  });
-}
 
 // Spieler auswählen
 startBtn.addEventListener("click",()=>{
@@ -50,26 +48,32 @@ function startProximity(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     if(!localPlayer) return;
 
+    const centerX = canvas.width/2;
+    const centerY = canvas.height/2;
+    const SCALE = 0.2;
+
     // Eigener Spieler
     ctx.fillStyle="#0ff";
     ctx.beginPath();
-    ctx.arc(canvas.width/2,canvas.height/2,15,0,Math.PI*2);
+    ctx.arc(centerX, centerY, 15,0,Math.PI*2);
     ctx.fill();
     ctx.fillStyle="#fff";
-    ctx.fillText(localPlayer.name,canvas.width/2-10,canvas.height/2-20);
+    ctx.fillText(localPlayer.name, centerX-10, centerY-20);
 
     // Andere Spieler
     for(let id in players){
       if(id===localPlayer.userId) continue;
-      const p=players[id];
-      const dx=p.x-localPlayer.x;
-      const dz=p.z-localPlayer.z;
-      const dist=Math.sqrt(dx*dx+dz*dz);
+      const p = players[id];
+      const dx = p.x - localPlayer.x;
+      const dz = p.z - localPlayer.z;
+      const dist = Math.sqrt(dx*dx+dz*dz);
       if(dist>HEARING_RADIUS) continue;
-      const screenX=canvas.width/2+dx*5;
-      const screenY=canvas.height/2+dz*5;
+
+      const screenX = centerX + dx*SCALE;
+      const screenY = centerY + dz*SCALE;
+
       ctx.beginPath();
-      ctx.arc(screenX,screenY,12,0,Math.PI*2);
+      ctx.arc(screenX, screenY, 12,0,Math.PI*2);
       ctx.fillStyle="#f00";
       ctx.fill();
       ctx.fillStyle="#fff";
@@ -100,13 +104,26 @@ function startMic(){
 }
 
 // Voice empfangen
+function playAudio(base64,volume=1){
+  const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  fetch("data:audio/webm;base64,"+base64)
+    .then(res=>res.arrayBuffer())
+    .then(buf=>audioCtx.decodeAudioData(buf))
+    .then(decoded=>{
+      const source=audioCtx.createBufferSource();
+      source.buffer=decoded;
+      const gainNode=audioCtx.createGain();
+      gainNode.gain.value=volume;
+      source.connect(gainNode).connect(audioCtx.destination);
+      source.start();
+    }).catch(e=>console.error(e));
+}
+
 socket.on("voice",({audio,fromX,fromZ,volume})=>{
   if(!localPlayer) return;
   const dx=fromX-localPlayer.x;
   const dz=fromZ-localPlayer.z;
   const dist=Math.sqrt(dx*dx+dz*dz);
   if(dist>HEARING_RADIUS) return;
-  const a=new Audio("data:audio/webm;base64,"+audio);
-  a.volume=volume;
-  a.play();
+  playAudio(audio,volume);
 });
