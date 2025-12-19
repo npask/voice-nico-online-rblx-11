@@ -3,202 +3,122 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proximity Voice 2D Smooth</title>
+<title>2D Proximity Voice</title>
 <style>
-body {margin:0;height:100vh;background:radial-gradient(circle at top,#0f172a,#020617);
-font-family:system-ui,sans-serif;color:#e5e7eb;display:flex;align-items:center;justify-content:center;}
-.card {background:rgba(15,23,42,0.85);border-radius:16px;padding:28px;width:360px;
-box-shadow:0 20px 60px rgba(0,0,0,0.6);}
-h1{margin:0 0 6px;font-size:22px;}
-p{margin:0 0 16px;font-size:14px;color:#94a3b8;}
-input{width:100%;padding:10px;border-radius:10px;border:none;margin-bottom:12px;}
-button{width:100%;padding:10px;border-radius:10px;border:none;cursor:pointer;font-size:14px;background:#38bdf8;color:#020617;font-weight:600;}
-button:hover{background:#0ea5e9;}
-.hint{margin-top:14px;font-size:12px;color:#94a3b8;line-height:1.4;}
-.status{margin-top:12px;font-size:13px;display:flex;align-items:center;gap:6px;}
-.dot{width:10px;height:10px;border-radius:50%;background:#ef4444;}
-.dot.active{background:#22c55e;}
-.mute{margin-top:10px;background:#1e293b;color:#e5e7eb;}
-.debug{margin-top:12px;font-size:11px;color:#94a3b8;max-height:150px;overflow-y:auto;background: rgba(0,0,0,0.2);padding:6px;border-radius:8px;}
+  body {
+    margin: 0;
+    background: radial-gradient(circle at top, #0f172a, #020617);
+    font-family: 'Segoe UI', sans-serif;
+    color: #e5e7eb;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    background: #0f172a;
+  }
+  #info {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 16px;
+    background: rgba(0,0,0,0.4);
+    padding: 8px 12px;
+    border-radius: 8px;
+  }
 </style>
 </head>
 <body>
-<div class="card">
-<h1>🎧 Proximity Voice 2D Smooth</h1>
-<p>Private Runde · Freunde only</p>
-<input id="name" placeholder="Dein Name" />
-<button onclick="joinVoice()">Voice beitreten</button>
+<div id="info">🎧 Klicke einen Spieler, um gezielt Voice zu hören</div>
+<canvas id="gameCanvas"></canvas>
 
-<div class="status">
-<div id="micDot" class="dot"></div>
-<span id="micText">Mikrofon aus</span>
-</div>
-<button id="muteBtn" class="mute" onclick="toggleMute()" disabled>🔇 Mute</button>
-
-<div id="pingDisplay" class="hint">📶 Ping: 0ms</div>
-
-<div id="playerPositions" class="debug" style="max-height:200px;">
-  <strong>🎮 Spieler Positionen:</strong>
-  <ul id="playersList" style="padding-left:16px;margin:4px 0;"></ul>
-</div>
-
-<div id="debug" class="debug"></div>
-</div>
-
-<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
-const socket = io();
-const audioCtx = new AudioContext();
-let localStream = null;
-let muted = false;
-const players = {};
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
 
-// Remote Audio: id -> {gain, queue, bufferIndex, bufferData}
-const remoteAudio = {};
-const debugEl = document.getElementById("debug");
-function logDebug(msg){ console.log(msg); debugEl.innerText=msg+"\n"+debugEl.innerText; }
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-// ----------------- Audio Kompression -----------------
-function floatTo16BitPCM(float32Array){
-    const buffer = new ArrayBuffer(float32Array.length*2);
-    const view = new DataView(buffer);
-    for(let i=0;i<float32Array.length;i++){
-        let s=Math.max(-1,Math.min(1,float32Array[i]));
-        view.setInt16(i*2, s<0?s*0x8000:s*0x7FFF, true);
-    }
-    return buffer;
-}
-function PCM16ToFloat32(buffer){
-    const view = new DataView(buffer);
-    const f32 = new Float32Array(buffer.byteLength/2);
-    for(let i=0;i<f32.length;i++) f32[i]=view.getInt16(i*2,true)/0x7FFF;
-    return f32;
-}
-
-// ----------------- Join Voice -----------------
-async function joinVoice(){
-    const name=document.getElementById("name").value.trim();
-    if(!name) return alert("Name fehlt 😅");
-
-    localStream=await navigator.mediaDevices.getUserMedia({audio:true});
-    await audioCtx.resume();
-    logDebug("✅ AudioContext resumed, mic active");
-    socket.emit("join", name);
-
-    document.getElementById("micDot").classList.add("active");
-    document.getElementById("micText").innerText="Mikrofon aktiv";
-    document.getElementById("muteBtn").disabled=false;
-
-    const processor=audioCtx.createScriptProcessor(2048,1,1);
-    const source=audioCtx.createMediaStreamSource(localStream);
-    source.connect(processor);
-    processor.connect(audioCtx.destination);
-
-    processor.onaudioprocess=e=>{
-        if(!muted){
-            const data=e.inputBuffer.getChannelData(0);
-            const buf=floatTo16BitPCM(data);
-            socket.emit("voice", buf);
-        }
-    };
-}
-
-// ----------------- Mute -----------------
-function toggleMute(){
-    if(!localStream) return;
-    muted=!muted;
-    localStream.getAudioTracks()[0].enabled=!muted;
-    document.getElementById("muteBtn").innerText=muted?"🎤 Unmute":"🔇 Mute";
-    document.getElementById("micText").innerText=muted?"Mikrofon stumm":"Mikrofon aktiv";
-    logDebug("🔇 Mute toggled: "+muted);
-}
-
-// ----------------- Remote Audio -----------------
-function createRemoteNode(id){
-    const gain=audioCtx.createGain();
-    gain.connect(audioCtx.destination);
-    remoteAudio[id]={gain, queue:[], bufferIndex:0, bufferData:null};
-}
-
-socket.on("voice",(data,fromId)=>{
-    if(fromId===socket.id) return;
-    if(!remoteAudio[fromId]) createRemoteNode(fromId);
-
-    remoteAudio[fromId].queue.push(PCM16ToFloat32(data));
+window.addEventListener("resize", () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 });
 
-// ScriptProcessor für smooth playback mit Fade
-function processRemoteAudio(){
-    for(const id in remoteAudio){
-        const node=remoteAudio[id];
-        if(node.bufferData==null && node.queue.length>0){
-            node.bufferData=node.queue.shift();
-            node.bufferIndex=0;
-        }
-        if(node.bufferData){
-            const buffer=node.bufferData;
-            const scriptNode=audioCtx.createScriptProcessor(1024,1,1);
-            scriptNode.connect(node.gain);
-            scriptNode.onaudioprocess=e=>{
-                const output=e.outputBuffer.getChannelData(0);
-                for(let i=0;i<output.length;i++){
-                    if(node.bufferIndex<buffer.length){
-                        output[i]=buffer[node.bufferIndex++];
-                        // kleiner Fade am Ende
-                        if(node.bufferIndex>buffer.length-32){
-                            output[i]*=(buffer.length-node.bufferIndex)/32;
-                        }
-                    }else{
-                        output[i]=0;
-                        node.bufferData=null;
-                    }
-                }
-            };
-        }
-    }
-    requestAnimationFrame(processRemoteAudio);
-}
-processRemoteAudio();
+// Socket.IO
+const socket = io("https://dein-server-url");
 
-// ----------------- 2D Distance Audio -----------------
-function update2DAudio(){
-    const myPos=players[socket.id]?.position||{x:0,z:0};
-    for(const id in remoteAudio){
-        if(!players[id]) continue;
-        const p=players[id].position;
-        const dx=p.x-myPos.x;
-        const dz=p.z-myPos.z;
-        const dist=Math.sqrt(dx*dx+dz*dz);
-        remoteAudio[id].gain.gain.value=dist>70?0:dist<20?1:1-(dist-20)/50;
-    }
-}
-setInterval(update2DAudio,50);
+// Spieler Daten
+let players = {}; // id -> {x, y, name, selected}
+let localPlayer = {x: 0, y: 0, id: "me"};
 
-// ----------------- Spieler Updates -----------------
-socket.on("players", data=>{
-    // Sicherstellen, dass data = {id -> {name, position}}
-    for(const id in data){
-        if(!data[id].position) data[id].position = {x:0,z:0};
-    }
-    Object.assign(players, data);
+// Maus Klick für gezieltes Hören
+canvas.addEventListener("click", e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
 
-    const ul = document.getElementById("playersList");
-    ul.innerHTML = "";
-    for(const id in players){
-        const pos = players[id].position;
-        ul.innerHTML += `<li>${players[id].name} → x:${pos.x.toFixed(1)} z:${pos.z.toFixed(1)}</li>`;
+  for (let id in players) {
+    const p = players[id];
+    const px = p.x + canvas.width/2;
+    const py = p.y + canvas.height/2;
+    const dist = Math.hypot(mx - px, my - py);
+    if (dist < 20) {
+      p.selected = !p.selected;
+      console.log("🎤 Selected player:", p.name, p.selected);
     }
+  }
 });
 
+// Dummy Roblox Position Updater (hier würdest du echte Werte nehmen)
+setInterval(() => {
+  // z.B. random Bewegung
+  localPlayer.x += Math.random()*4 - 2;
+  localPlayer.y += Math.random()*4 - 2;
+  socket.emit("updatePosition", {position: {x: localPlayer.x, y: 0, z: localPlayer.y}});
+}, 100);
 
-// ----------------- Ping -----------------
-let lastPingTime=0;
-setInterval(()=>{
-    lastPingTime=Date.now();
-    socket.emit("ping");
-},2000);
+// Canvas Draw Loop
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-socket.on("pong",()=>document.getElementById("pingDisplay").innerText="📶 Ping: "+(Date.now()-lastPingTime)+"ms");
+  // Eigener Spieler
+  ctx.fillStyle = "#0ff";
+  ctx.beginPath();
+  ctx.arc(canvas.width/2, canvas.height/2, 15, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillText("Du", canvas.width/2-10, canvas.height/2-20);
+
+  // Andere Spieler
+  for (let id in players) {
+    const p = players[id];
+    const screenX = canvas.width/2 + (p.x - localPlayer.x)*5;
+    const screenY = canvas.height/2 + (p.z - localPlayer.y)*5;
+
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, p.selected ? 20 : 12, 0, Math.PI*2);
+    ctx.fillStyle = p.selected ? "#ff0" : "#f00";
+    ctx.fill();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "12px sans-serif";
+    ctx.fillText(p.name, screenX - 10, screenY - 15);
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+// Socket.IO: Positionen vom Server bekommen
+socket.on("updatePlayers", (data) => {
+  players = data; // {id: {x,y,z,name}}
+});
+
+// Incoming Voice
+socket.on("voice", ({audio, volume}) => {
+  const a = new Audio("data:audio/webm;base64," + audio);
+  a.volume = volume;
+  a.play();
+});
 </script>
 </body>
 </html>
