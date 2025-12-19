@@ -49,6 +49,7 @@ const socket = io();
 const audioCtx = new AudioContext();
 let localStream = null;
 const peers = {}; // id -> { pc, gain, panner }
+let knownUsers = []; // IDs der schon verbundenen Users
 
 const debugEl = document.getElementById("debug");
 function logDebug(msg){ console.log(msg); debugEl.innerText = msg+"\n"+debugEl.innerText; }
@@ -64,14 +65,14 @@ async function joinVoice(){
   await audioCtx.resume();
   logDebug("✅ AudioContext resumed, mic active");
 
-  socket.emit("join", name);
-
   document.getElementById("micDot").classList.add("active");
   document.getElementById("micText").innerText = "Mikrofon aktiv";
   document.getElementById("muteBtn").disabled = false;
 
-  // Erst jetzt Peers für schon bestehende Users erstellen
-  socket.emit("request-existing"); // optional je nach Server
+  socket.emit("join", name);
+
+  // Jetzt Peers für bereits bestehende Users erstellen
+  knownUsers.forEach(id => createPeer(id, true));
 }
 
 // --------------------
@@ -107,7 +108,7 @@ function createPeer(id, initiator){
   pc.ontrack = e=>{
     logDebug("🎧 Track received from "+id);
     const src = audioCtx.createMediaStreamSource(e.streams[0]);
-    src.connect(gain); // später kann man auf panner.connect(audioCtx.destination) wechseln
+    src.connect(gain); 
   };
 
   pc.onicecandidate = e=>{
@@ -130,7 +131,8 @@ function createPeer(id, initiator){
 // --------------------
 socket.on("user-joined", id=>{
   logDebug("➕ User joined: "+id);
-  createPeer(id,true);
+  knownUsers.push(id);
+  if(localStream) createPeer(id,true);
 });
 
 socket.on("signal", async data=>{
@@ -153,6 +155,7 @@ socket.on("signal", async data=>{
 // --------------------
 socket.on("user-left", id=>{
   logDebug("❌ User left: "+id);
+  knownUsers = knownUsers.filter(x=>x!==id);
   if(peers[id]){
     peers[id].pc.close();
     delete peers[id];
