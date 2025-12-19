@@ -13,6 +13,8 @@ const io = new Server(server);
 const players = {}; 
 // playerId -> { name?, position }
 
+app.use(express.static("public"));
+
 app.post("/positions", (req, res) => {
   const batch = req.body; // { playerId: {x,y,z}, ... }
 
