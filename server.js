@@ -32,6 +32,12 @@ io.on("connection", socket => {
     if(players[socket.id]) players[socket.id].position = pos;
   });
 
+  
+  socket.on("signal", data => {
+    // Daten weiterleiten an den angegebenen Peer
+    io.to(data.to).emit("signal", { from: socket.id, signal: data.signal });
+  });
+
   socket.on("disconnect", () => {
     console.log("❌ User left:", socket.id);
     delete players[socket.id];
