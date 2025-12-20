@@ -13,8 +13,8 @@ window.addEventListener("resize", resize);
 const socket = io();
 
 // ================== CONFIG ==================
-const HEARING_RADIUS = 50;
-let SCALE = 0.015; // gut für Minecraft Koordinaten 🧱
+const HEARING_RADIUS = 80;
+let SCALE = 5; // gut für Minecraft Koordinaten 🧱
 
 // ================== STATE ==================
 let players = {};
